@@ -1,6 +1,13 @@
 import chromadb
-from openai import OpenAI
+import requests
 from ..config import settings
+
+# Gemini's text-embedding-004 is only reachable via the native REST API,
+# not the OpenAI-compatible shim.  We call batchEmbedContents directly.
+_EMBED_URL_TEMPLATE = (
+    "https://generativelanguage.googleapis.com/v1beta"
+    "/models/{model}:batchEmbedContents?key={key}"
+)
 
 
 class ChromaEmbedder:
@@ -10,17 +17,25 @@ class ChromaEmbedder:
             name="invoices",
             metadata={"hnsw:space": "cosine"},
         )
-        self._openai = OpenAI(
-            api_key=settings.gemini_api_key,
-            base_url=settings.gemini_base_url,
-        )
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        response = self._openai.embeddings.create(
+        url = _EMBED_URL_TEMPLATE.format(
             model=settings.gemini_embed_model,
-            input=texts,
+            key=settings.gemini_api_key,
         )
-        return [item.embedding for item in response.data]
+        payload = {
+            "requests": [
+                {
+                    "model": f"models/{settings.gemini_embed_model}",
+                    "content": {"parts": [{"text": t}]},
+                }
+                for t in texts
+            ]
+        }
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        return [e["values"] for e in data["embeddings"]]
 
     def embed_chunks(self, chunks: list[dict]) -> None:
         if not chunks:

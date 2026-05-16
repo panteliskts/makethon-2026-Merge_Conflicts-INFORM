@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     admin_api_token: str = ""
 
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    gemini_embed_model: str = "text-embedding-004"
+    gemini_embed_model: str = "gemini-embedding-001"
     gemini_chat_model: str = "gemini-2.0-flash"
 
 
