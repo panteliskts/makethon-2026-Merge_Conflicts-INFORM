@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
 import { useSession, signOut } from "next-auth/react";
-import { clearDiagnosticsIdentity, setDiagnosticsIdentity, type ChunkResult } from "@/lib/api";
+import { clearDiagnosticsIdentity, setDiagnosticsIdentity } from "@/lib/api";
+import InvoiceDataPanel from "@/components/InvoiceDataPanel";
 import ChatPanel from "@/components/ChatPanel";
 import ReconcilePanel from "@/components/ReconcilePanel";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
 import { useLocale } from "@/lib/useLocale";
-
-const PDFViewer = dynamic(() => import("@/components/PDFViewer"), { ssr: false });
 
 type Tab = "chat" | "reconcile";
 
@@ -20,11 +18,10 @@ export default function Home() {
     { id: "chat", label: t.dashboard.tabs.chat },
     { id: "reconcile", label: t.dashboard.tabs.reconcile },
   ];
+
   const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [activeBboxes, setActiveBboxes] = useState<ChunkResult[]>([]);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
   const [sourceFile, setSourceFile] = useState<string | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const role = session?.user?.role ?? "client";
 
   useEffect(() => {
@@ -35,8 +32,15 @@ export default function Home() {
     });
   }, [session?.user?.email, session?.user?.name, role]);
 
+  function handleUpload(url: string, sf: string) {
+    setPdfUrl(url);
+    setSourceFile(sf);
+  }
+
   return (
     <div className="flex h-[100dvh] flex-col bg-background">
+
+      {/* ── Header ──────────────────────────────────────────────── */}
       <header className="grid shrink-0 grid-cols-[1fr_auto] gap-3 border-b border-card-border bg-sidebar px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-accent text-ink shadow-glow">
@@ -83,13 +87,12 @@ export default function Home() {
             <img src={session.user.image} alt="avatar" className="h-8 w-8 rounded-md" />
           )}
           {session?.user?.name && (
-            <span className="hidden max-w-[9rem] truncate text-xs text-text-secondary lg:block">{session.user.name}</span>
+            <span className="hidden max-w-[9rem] truncate text-xs text-text-secondary lg:block">
+              {session.user.name}
+            </span>
           )}
           <button
-            onClick={() => {
-              clearDiagnosticsIdentity();
-              signOut({ callbackUrl: "/" });
-            }}
+            onClick={() => { clearDiagnosticsIdentity(); signOut({ callbackUrl: "/" }); }}
             className="pressable focus-ring rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary"
           >
             {t.nav.signout}
@@ -97,23 +100,25 @@ export default function Home() {
         </div>
       </header>
 
+      {/* ── Main ────────────────────────────────────────────────── */}
       <main id="main-content" className="flex-1 overflow-hidden">
+
         {activeTab === "chat" && (
           <div className="flex h-full flex-col lg:flex-row">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-card-border lg:border-b-0 lg:border-r">
-              <ChatPanel
-                onChunksHighlight={setActiveBboxes}
-                onPdfLoad={(url) => { setPdfUrl(url); setActiveBboxes([]); }}
+            {/* Left: invoice data + source preview */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-card-border lg:max-w-[420px] lg:border-b-0 lg:border-r">
+              <InvoiceDataPanel
                 sourceFile={sourceFile}
-                onSourceFileChange={setSourceFile}
+                pdfUrl={pdfUrl}
+                onUpload={handleUpload}
               />
             </div>
+
+            {/* Right: chat */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <PDFViewer
-                pdfUrl={pdfUrl}
-                highlightedChunks={activeBboxes}
-                currentPage={currentPage}
-                onPageChange={setCurrentPage}
+              <ChatPanel
+                sourceFile={sourceFile}
+                onChunksHighlight={() => {}}
               />
             </div>
           </div>

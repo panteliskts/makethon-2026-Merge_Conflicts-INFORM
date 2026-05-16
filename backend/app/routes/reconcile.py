@@ -112,9 +112,9 @@ async def reconcile(
         except (ValueError, KeyError):
             continue
 
-    where = {"source_file": source_file} if source_file else None
+    # Local ChromaDB get — no embedding API call needed for reconciliation.
     try:
-        raw_chunks = _get_embedder().query("total amount invoice", n_results=20, where=where)
+        raw_chunks = _get_embedder().get_by_source(source_file)
         invoice_items = _extract_invoice_info(raw_chunks)
     except Exception as exc:
         record_exception(

@@ -64,7 +64,7 @@ async def chat_endpoint(req: ChatRequest, request: Request):
     try:
         chunks = _get_embedder().query(last_query, n_results=5, where=where)
         messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
-        result = _get_llm().generate_chat_answer(messages_dicts, chunks)
+        result = _get_llm().generate_chat_answer(messages_dicts, chunks, source_file=req.source_file)
     except Exception as exc:
         record_exception(
             request,

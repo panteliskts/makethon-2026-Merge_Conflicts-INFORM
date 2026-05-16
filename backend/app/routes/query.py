@@ -1,5 +1,6 @@
 import time
 from fastapi import APIRouter, Request
+from ..config import settings
 from ..models import QueryRequest, QueryResponse, ChunkResult, BoundingBox
 from ..services.embedder import ChromaEmbedder
 from ..services.llm import LLMService
@@ -16,6 +17,8 @@ _metrics = {
 
 _embedder: ChromaEmbedder | None = None
 _llm: LLMService | None = None
+
+_SCORE_THRESHOLD = 0.35  # cosine similarity minimum for "grounded"
 
 
 def _get_embedder() -> ChromaEmbedder:
@@ -54,21 +57,37 @@ def _build_chunk_result(item: dict) -> ChunkResult:
     )
 
 
+def _local_grounding_check(answer: str, chunks: list[dict]) -> bool:
+    """
+    Local grounding check — no second LLM call.
+    Passes when:
+    - at least one chunk was retrieved
+    - the top chunk score is above threshold
+    - the answer does not look like a refusal
+    """
+    if not chunks:
+        return False
+    top_score = 1.0 - float(chunks[0].get("distance", 1.0))
+    if top_score < _SCORE_THRESHOLD:
+        return False
+    from ..services.llm import _REFUSAL
+    if _REFUSAL in answer:
+        return False
+    return True
+
+
 @router.post("/query", response_model=QueryResponse)
 async def query_endpoint(req: QueryRequest, request: Request):
     t0 = time.monotonic()
-
+    top_k = min(req.top_k, settings.top_k)
     where = {"source_file": req.source_file} if req.source_file else None
 
     try:
-        chunks = _get_embedder().query(req.query, n_results=req.top_k, where=where)
-        result = _get_llm().generate_answer(req.query, chunks)
+        chunks = _get_embedder().query(req.query, n_results=top_k, where=where)
+        result = _get_llm().generate_answer(req.query, chunks, source_file=req.source_file)
         answer = result["answer"]
         refused = result["refused"]
-        grounded = not refused
-
-        if not refused:
-            grounded = _get_llm().self_check(answer, chunks)
+        grounded = _local_grounding_check(answer, chunks)
     except Exception as exc:
         record_exception(
             request,
@@ -78,7 +97,7 @@ async def query_endpoint(req: QueryRequest, request: Request):
             metadata={
                 "source_file": req.source_file,
                 "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-                "top_k": req.top_k,
+                "top_k": top_k,
             },
         )
         raise
@@ -100,8 +119,9 @@ async def query_endpoint(req: QueryRequest, request: Request):
             "source_file": req.source_file,
             "grounded": grounded,
             "refused": refused,
+            "cached": result.get("cached", False),
             "latency_ms": round(latency_ms, 1),
-            "top_k": req.top_k,
+            "top_k": top_k,
         },
     )
 

@@ -12,7 +12,9 @@ class Settings(BaseSettings):
 
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     gemini_embed_model: str = "gemini-embedding-001"
-    gemini_chat_model: str = "gemini-2.0-flash"
+    gemini_chat_model: str = "gemini-2.5-flash-lite"
+    max_tokens: int = 256
+    top_k: int = 3
 
 
 settings = Settings()

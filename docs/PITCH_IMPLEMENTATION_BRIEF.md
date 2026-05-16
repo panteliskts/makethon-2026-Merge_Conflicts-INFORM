@@ -175,6 +175,7 @@ Example tiers for the pitch:
 - Premium admin diagnostics and audit history.
 - Integration fees for accounting/ERP systems.
 - Enterprise support and private deployment.
+- Gross-margin protection through document caching, answer reuse, cheaper default models, and usage-based controls.
 
 ### Why Customers Pay
 
@@ -369,6 +370,7 @@ Explain:
 - Usage tiers by invoice volume.
 - Premium admin/audit features.
 - Enterprise integrations and private deployment.
+- Cost controls: cache repeated document work, route simple tasks to cheaper models, and charge by document volume.
 
 ### Slide 7: Close
 
@@ -423,7 +425,170 @@ Key backend files:
 - `backend/app/routes/admin.py`
 - `backend/app/services/telemetry.py`
 
-## 10. Current Implementation
+## 10. API Cost And Quota Efficiency Plan
+
+The latest API-key limit issue should be treated as a useful product lesson: invoice AI must be cost-aware if it is going to become a real SaaS product.
+
+### Why The Key Hit Its Limit
+
+The current app uses the same Gemini API key for embeddings and chat responses.
+
+Cost and quota pressure comes from:
+
+- Uploading a PDF: embeds all extracted invoice chunks.
+- Re-uploading the same PDF: embeds the chunks again.
+- Asking a chat question: embeds the question for retrieval and calls the chat model.
+- Using `/api/query`: embeds the query, calls the model for an answer, then calls the model again for self-check.
+- Running reconciliation: currently performs an embedding query to retrieve invoice totals.
+- Sending chat history: `generate_chat_answer()` sends previous messages plus retrieved chunks, so prompt size grows during the session.
+
+The admin dashboard is not the main quota driver. It mostly reads local telemetry and Chroma metadata.
+
+### Demo Operating Rules
+
+Use these rules during the live pitch:
+
+- Upload the demo invoice once.
+- Do not re-upload the same PDF unless needed.
+- Ask 2-3 prepared questions.
+- Use the normal Chat tab, not `/api/query`.
+- Avoid repeatedly refreshing flows that call the backend.
+- Keep a backup indexed invoice ready in local ChromaDB.
+- Have a backup API key only as a fallback, not as the cost strategy.
+
+### Engineering Fixes To Prioritize
+
+#### 1. PDF Hash Deduplication
+
+Hash the uploaded PDF bytes before ingestion.
+
+If the same file hash was already processed:
+
+- Skip parsing.
+- Skip embedding.
+- Reuse the existing indexed source.
+
+This prevents the most obvious demo and production waste.
+
+#### 2. Latest-Question-Only RAG
+
+For invoice Q&A, the LLM usually does not need the full chat history. It needs:
+
+- System prompt.
+- Retrieved chunks.
+- Latest user question.
+
+Change `generate_chat_answer()` so it does not send the entire message history by default.
+
+#### 3. Answer Cache
+
+Cache responses by:
+
+- Document hash.
+- Normalized question.
+- Model.
+- Retrieval `top_k`.
+
+Repeated demo questions should cost zero after the first run.
+
+#### 4. Smaller Retrieval And Output
+
+Default settings for pitch/demo:
+
+- `top_k=3` instead of `5`.
+- `max_tokens=256` instead of `512`.
+- Trim chunk text before sending it to the LLM.
+- Filter tiny/noisy chunks during ingestion.
+
+This cuts both token cost and latency.
+
+#### 5. Conditional Self-Check
+
+Keep self-check as a premium/quality feature, but do not run it for every request.
+
+Run self-check only when:
+
+- Retrieval score is low.
+- No strong totals/payment/date chunk is retrieved.
+- The answer contains values that are not found in source chunks.
+- The user is in a high-assurance mode.
+
+For normal demo chat, use local grounding checks first.
+
+#### 6. Extract Reconciliation Fields During Ingest
+
+Reconciliation should not need a fresh embedding query every time.
+
+During ingestion, extract and store:
+
+- Candidate invoice total.
+- Invoice number.
+- Vendor.
+- Date.
+- Currency.
+
+Then reconciliation can use stored metadata and local matching logic.
+
+#### 7. Model Routing
+
+Use a cheaper model as the default and reserve stronger models for hard cases.
+
+Recommended default:
+
+- `gemini-2.5-flash-lite` for demo, extraction, and common invoice questions.
+
+Escalation option:
+
+- `gemini-2.5-flash` for ambiguous questions or high-assurance answers.
+
+The current default `gemini-2.0-flash` should be migrated because Google marks it as deprecated with shutdown on June 1, 2026.
+
+#### 8. Rate Limit Handling
+
+Add handling for quota/rate-limit responses:
+
+- Detect HTTP 429.
+- Apply exponential backoff.
+- Show a clean frontend message.
+- Record the event in admin telemetry.
+- Add per-session request throttling.
+
+Gemini rate limits are generally measured across requests per minute, input tokens per minute, and requests per day, and they apply at the project level.
+
+#### 9. Usage Telemetry
+
+Record approximate cost drivers per route:
+
+- Route name.
+- Model.
+- Input token count.
+- Output token count.
+- Number of chunks sent.
+- Cache hit or miss.
+- Embedding calls.
+- LLM calls.
+
+This turns cost control into an admin feature and strengthens the business pitch.
+
+#### 10. Context Caching And Batch API
+
+Use Gemini context caching when the same large prompt or document context is reused across many requests.
+
+Use Gemini Batch API only for non-urgent workloads, such as:
+
+- Bulk document pre-processing.
+- Offline evaluations.
+- Demo dataset preparation.
+
+Do not use Batch API for live chat because it is asynchronous.
+
+### Pitch Angle
+
+If judges ask about cost, say:
+
+> We already identified the main cost drivers: repeated embeddings, growing chat prompts, and unconditional self-checks. The roadmap is to hash documents, cache answers, route simple requests to Flash-Lite, and keep the expensive verification path for high-risk cases. That is how this becomes a sustainable SaaS product instead of a cool but expensive demo.
+
+## 11. Current Implementation
 
 ### Client Dashboard
 
@@ -466,7 +631,7 @@ Routes:
 
 Middleware protects `/dashboard`, `/client`, and `/admin`.
 
-## 11. Current Limitations
+## 12. Current Limitations
 
 Frame these as roadmap, not weaknesses.
 
@@ -509,15 +674,28 @@ Future:
 - Admin audit logs.
 - Enterprise SSO.
 
-## 12. Short Pitch
+### Cost Controls
+
+Current cost controls are limited.
+
+Future:
+
+- PDF hash deduplication.
+- Answer cache.
+- Usage telemetry.
+- Conditional self-check.
+- Model routing.
+- Stored reconciliation metadata.
+
+## 13. Short Pitch
 
 INFORM is evidence-first invoice intelligence. A finance user can upload an invoice, ask natural-language questions, and verify every answer on the original PDF through clickable source highlights. The same workflow supports bank reconciliation, while a separate admin dashboard gives technical teams session telemetry, error traces, and safe diagnostics. INFORM is not just invoice extraction. It is a verified and supportable invoice workflow.
 
-## 13. Technical Pitch
+## 14. Technical Pitch
 
 INFORM uses a Next.js frontend and FastAPI backend. Uploaded invoices are parsed into semantic chunks with page coordinates, embedded, and stored in ChromaDB. Chat requests retrieve relevant chunks and send them to the LLM for grounded answers. The frontend maps returned bounding boxes back onto the PDF viewer so users can verify source evidence visually. The backend records telemetry for ingest, chat, query, and reconciliation routes. Admin users can inspect sessions and run allowlisted operational diagnostics.
 
-## 14. Money Slide Pitch
+## 15. Money Slide Pitch
 
 INFORM can be sold as a SaaS product for finance teams and accounting firms that need fast invoice review without a heavy AP implementation.
 
@@ -529,4 +707,4 @@ Revenue comes from:
 - ERP/accounting integrations.
 - Enterprise private deployments.
 
-The customer pays because INFORM saves review time, reduces verification risk, and gives finance teams an audit-friendly way to use AI on invoice documents.
+The customer pays because INFORM saves review time, reduces verification risk, and gives finance teams an audit-friendly way to use AI on invoice documents. The product protects margin by avoiding repeated document work, caching repeated answers, and routing common requests to cost-efficient models.
