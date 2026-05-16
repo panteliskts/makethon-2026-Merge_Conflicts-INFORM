@@ -23,13 +23,13 @@ context summaries → embeddings → ChromaDB.
 
 ### How to run on Kaggle
 1. *Settings → Accelerator → GPU* (T4 is enough).
-2. *Settings → Internet → On* (needed for pip, model download, Gemini).
-3. Attach datasets: **sroie-datasetv2** (`urbikn/sroie-datasetv2`),
-   **invoice-ocr** (`senju14/invoice-ocr`),
-   **high-quality-invoice-images-for-ocr** (`osamahosamabdellatif/...`).
-   CORD v2 is pulled from Hugging Face automatically.
-4. Add a Kaggle Secret named `GEMINI_API_KEY` (*Add-ons → Secrets*).
-5. *Run All*. Artifacts land in `/kaggle/working/`.
+2. *Settings → Internet → On* (required — datasets, model, and Gemini all download).
+3. Add a Kaggle Secret named `GEMINI_API_KEY` (*Add-ons → Secrets*).
+4. *Run All*. Artifacts land in `/kaggle/working/`.
+
+All datasets download automatically — SROIE, invoice-ocr and HQ via `kagglehub`,
+CORD v2 from Hugging Face. No *Add Input* step needed (though an attached copy is
+used if present).
 
 ### Outputs
 - `layoutlmv3-invoice.zip` — trained model the backend loads.
@@ -63,7 +63,7 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print("device:", DEVICE)
 
-# --- locate attached datasets (Kaggle mounts them under /kaggle/input) ---
+# --- datasets: auto-download via kagglehub, fall back to attached folders ---
 def find_dir(*keywords):
     for root in glob.glob("/kaggle/input/*"):
         name = os.path.basename(root).lower()
@@ -71,19 +71,27 @@ def find_dir(*keywords):
             return root
     return None
 
-print("Attached input folders:")
-for root in sorted(glob.glob("/kaggle/input/*")):
-    print("  ", root)
+def get_dataset(slug, *keywords):
+    attached = find_dir(*keywords)          # use Add Input copy if present
+    if attached:
+        print(f"  {slug}: attached -> {attached}")
+        return attached
+    try:
+        import kagglehub
+        path = kagglehub.dataset_download(slug)
+        print(f"  {slug}: downloaded -> {path}")
+        return path
+    except Exception as e:
+        print(f"  {slug}: unavailable ({e})")
+        return None
 
-SROIE_DIR   = find_dir("sroie")
-INVOICE_DIR = find_dir("invoice", "ocr") or find_dir("invoice")
-HQ_DIR      = find_dir("high", "quality")
-print("\nSROIE:      ", SROIE_DIR)
-print("invoice-ocr:", INVOICE_DIR)
-print("HQ invoice: ", HQ_DIR)
+print("Resolving datasets (needs Internet ON):")
+SROIE_DIR   = get_dataset("urbikn/sroie-datasetv2", "sroie")
+INVOICE_DIR = get_dataset("senju14/invoice-ocr", "invoice", "ocr")
+HQ_DIR      = get_dataset("osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+                          "high", "quality")
 if SROIE_DIR is None:
-    print("\nWARNING: SROIE not found. Attach 'urbikn/sroie-datasetv2' via "
-          "Add Input. Training falls back to CORD only.")
+    print("WARNING: SROIE unavailable - training falls back to CORD only.")
 
 WORK = "/kaggle/working"
 os.makedirs(WORK, exist_ok=True)
