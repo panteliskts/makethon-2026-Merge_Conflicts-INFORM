@@ -27,9 +27,9 @@ context summaries → embeddings → ChromaDB.
 3. Add a Kaggle Secret named `GEMINI_API_KEY` (*Add-ons → Secrets*).
 4. *Run All*. Artifacts land in `/kaggle/working/`.
 
-All datasets download automatically — SROIE, invoice-ocr and HQ via `kagglehub`,
-CORD v2 from Hugging Face. No *Add Input* step needed (though an attached copy is
-used if present).
+All datasets download automatically — SROIE receipts and HQ invoices via `kagglehub`,
+CORD v2 receipts from Hugging Face. No *Add Input* step needed (though an attached
+copy is used if present). The model trains on **both receipts and real invoices**.
 
 ### Outputs
 - `layoutlmv3-invoice.zip` — trained model the backend loads.
@@ -86,19 +86,19 @@ def get_dataset(slug, *keywords):
         return None
 
 print("Resolving datasets (needs Internet ON):")
-SROIE_DIR   = get_dataset("urbikn/sroie-datasetv2", "sroie")
-INVOICE_DIR = get_dataset("senju14/invoice-ocr", "invoice", "ocr")
-HQ_DIR      = get_dataset("osamahosamabdellatif/high-quality-invoice-images-for-ocr",
-                          "high", "quality")
-if SROIE_DIR is None:
-    print("WARNING: SROIE unavailable - training falls back to CORD only.")
+SROIE_DIR = get_dataset("urbikn/sroie-datasetv2", "sroie")
+HQ_DIR    = get_dataset("osamahosamabdellatif/high-quality-invoice-images-for-ocr",
+                        "high", "quality")
+if SROIE_DIR is None and HQ_DIR is None:
+    print("WARNING: SROIE and HQ unavailable - training falls back to CORD only.")
 
 WORK = "/kaggle/working"
 os.makedirs(WORK, exist_ok=True)
 
 # --- run-size knobs (raise for a fuller run) ---
-MAX_SROIE   = None   # None = all
-MAX_CORD    = 800
+MAX_SROIE   = None   # None = all  (~626 receipts)
+MAX_CORD    = 800    # receipts with line-item labels
+MAX_HQ      = 450    # real invoices (OCR'd at run time, so this costs time)
 NUM_EPOCHS  = 5
 MAX_KB_DOCS = 60     # documents pushed into ChromaDB
 """)
@@ -272,10 +272,105 @@ cord_train, cord_test = parse_cord(MAX_CORD)
 print("CORD train/test docs:", len(cord_train), len(cord_test))
 """)
 
+# ---------------------------------------------------------------- C6b
+code(r"""
+# HQ invoices - real invoices with JSON ground truth. Word boxes come from
+# Tesseract OCR; labels by matching ground-truth field values onto OCR words.
+import pytesseract, csv as _csv
+
+def _ocr_words(image):
+    d = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+    ws, bs = [], []
+    for i, t in enumerate(d["text"]):
+        if t.strip() and int(d["conf"][i]) > 0:
+            x, y = d["left"][i], d["top"][i]
+            ws.append(t.strip())
+            bs.append([x, y, x + d["width"][i], y + d["height"][i]])
+    return ws, bs
+
+def _match_span(nwords, vtoks, used):
+    # best contiguous run of unused OCR words matching the value tokens
+    L = len(vtoks)
+    if L == 0 or L > len(nwords):
+        return None
+    best, best_s = None, 0.5
+    for i in range(len(nwords) - L + 1):
+        if any(used[i:i + L]):
+            continue
+        win = nwords[i:i + L]
+        s = sum(1 for a, b in zip(win, vtoks) if a == b) / L
+        if s > best_s:
+            best_s, best = s, (i, i + L)
+    return best
+
+def parse_hq(limit):
+    if HQ_DIR is None:
+        return [], []
+    docs = []
+    for cf in sorted(glob.glob(os.path.join(HQ_DIR, "**", "*.csv"), recursive=True)):
+        imgdir = cf[:-4]  # the image folder sits beside the csv, same stem
+        for row in _csv.DictReader(open(cf, encoding="utf-8", errors="ignore")):
+            if limit and len(docs) >= limit:
+                break
+            ip = os.path.join(imgdir, (row.get("File Name") or "").strip())
+            if not os.path.exists(ip):
+                continue
+            try:
+                jd = json.loads(row.get("Json Data") or "{}")
+                img = Image.open(ip)
+            except Exception:
+                continue
+            words, boxes = _ocr_words(img)
+            if not words:
+                continue
+            nwords = [norm(w) for w in words]
+            used = [False] * len(words)
+            labels = ["O"] * len(words)
+            inv = jd.get("invoice", {}) or {}
+            sub = jd.get("subtotal", {}) or {}
+            targets = []                       # ordered: specific values first
+            for k, e in [("invoice_number", "INVOICE_NO"), ("invoice_date", "DATE")]:
+                if inv.get(k):
+                    targets.append((e, str(inv[k])))
+            for k, e in [("total", "TOTAL"), ("tax", "TAX")]:
+                if sub.get(k):
+                    targets.append((e, str(sub[k])))
+            for k, e in [("seller_name", "COMPANY"), ("client_name", "COMPANY"),
+                         ("seller_address", "ADDRESS"), ("client_address", "ADDRESS")]:
+                if inv.get(k):
+                    targets.append((e, str(inv[k])))
+            for it in jd.get("items", []) or []:
+                if it.get("total_price"):
+                    targets.append(("ITEM_PRICE", str(it["total_price"])))
+                if it.get("quantity"):
+                    targets.append(("ITEM_QTY", str(it["quantity"])))
+                if it.get("description"):
+                    targets.append(("ITEM_NAME", str(it["description"])))
+            for ent, val in targets:
+                sp = _match_span(nwords, norm(val).split(), used)
+                if sp:
+                    for j in range(sp[0], sp[1]):
+                        labels[j] = ent
+                        used[j] = True
+            if any(l != "O" for l in labels):
+                stem = os.path.splitext((row.get("File Name") or "x").strip())[0]
+                docs.append({"image_path": ip, "words": words, "boxes": boxes,
+                             "labels": to_bio(words, boxes, labels),
+                             "source": f"hq_{stem}.jpg", "entities": inv})
+        if limit and len(docs) >= limit:
+            break
+    random.shuffle(docs)
+    n = max(1, len(docs) // 10)
+    return docs[n:], docs[:n]
+
+hq_train, hq_test = parse_hq(MAX_HQ)
+print("HQ invoice train/test docs:", len(hq_train), len(hq_test))
+""")
+
 # ---------------------------------------------------------------- C7
 code(r"""
-train_docs = sroie_train + cord_train
-test_docs  = sroie_test  + cord_test
+train_docs = sroie_train + cord_train + hq_train
+test_docs  = sroie_test  + cord_test  + hq_test
 random.shuffle(train_docs)
 print(f"unified training docs: {len(train_docs)} | test docs: {len(test_docs)}")
 
@@ -352,8 +447,13 @@ args = TrainingArguments(
     per_device_eval_batch_size=2,
     num_train_epochs=NUM_EPOCHS,
     learning_rate=5e-5,
+    warmup_ratio=0.1,
     eval_strategy="epoch" if eval_ds else "no",
-    save_strategy="no",
+    save_strategy="epoch" if eval_ds else "no",
+    save_total_limit=1,
+    load_best_model_at_end=bool(eval_ds),
+    metric_for_best_model="f1",
+    greater_is_better=True,
     logging_steps=50,
     fp16=(DEVICE == "cuda"),
     report_to="none",
@@ -658,7 +758,17 @@ client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = client.get_or_create_collection(
     name="invoices", metadata={"hnsw:space": "cosine"})
 
-kb_docs = (test_docs + train_docs)[:MAX_KB_DOCS]
+# interleave invoices and receipts so the knowledgebase represents both
+def _interleave(*pools):
+    out, pools = [], [list(p) for p in pools]
+    while any(pools):
+        for p in pools:
+            if p:
+                out.append(p.pop(0))
+    return out
+
+kb_docs = _interleave(hq_test, sroie_test, cord_test, hq_train,
+                      sroie_train, cord_train)[:MAX_KB_DOCS]
 total = 0
 for d in kb_docs:
     try:

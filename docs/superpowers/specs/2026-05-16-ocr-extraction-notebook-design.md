@@ -35,12 +35,17 @@ Rejected: VLM-per-request (no compiled model, per-call cost/variance) and pure h
 
 All downloaded locally as zips / extracted folders in the project root.
 
+Datasets download at run time (`kagglehub` / Hugging Face); attached copies are used
+if present.
+
 | Dataset | Form | Annotations | Role |
 |---|---|---|---|
-| SROIE v2 | `.jpg` receipts | `box/*.txt` quad coords + `entities/*.json` (company/date/address/total) | Primary training labels |
-| CORD v2 | parquet (image + KV ground truth) | structured key-value pairs | Training labels (line items) |
-| invoice-ocr | `.jpg` + Tesseract `image_to_data` JSON | words+boxes only, no field labels | Eval + Gemini pseudo-labels |
-| HQ invoice | `.jpg` + JSON ground truth + OCR text | structured JSON | Eval + Gemini pseudo-labels |
+| SROIE v2 | `.jpg` receipts | `box/*.txt` quad coords + `entities/*.json` (company/date/address/total) | Training labels (receipts) |
+| CORD v2 | parquet (image + KV ground truth) | structured key-value pairs | Training labels (receipt line items) |
+| HQ invoice | `.jpg` invoices + per-image JSON ground truth | invoice_number/date/seller/items/totals | Training labels (real invoices) — OCR for word boxes, JSON field values matched onto words |
+
+invoice-ocr is not used: it is SROIE-derived images with only Tesseract word boxes and
+no field labels, so it adds no training signal beyond SROIE.
 
 ## Unified Schema
 
@@ -58,8 +63,9 @@ matched back onto OCR word boxes by fuzzy text alignment.
 ## Model
 
 - `microsoft/layoutlmv3-base` token classifier; boxes normalized to 0–1000.
-- Train on Kaggle GPU; held-out SROIE/CORD test splits.
-- Metric: per-entity precision/recall/F1.
+- Train on Kaggle GPU over receipts (SROIE + CORD) **and real invoices (HQ)**.
+- Held-out test split per dataset; best epoch kept (`load_best_model_at_end` on F1).
+- Metric: per-entity precision/recall/F1 via seqeval.
 - Export: HF `save_pretrained` (model + processor) → `layoutlmv3-invoice.zip`.
 
 ## Inference Function
