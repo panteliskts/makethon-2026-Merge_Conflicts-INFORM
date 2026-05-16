@@ -123,12 +123,26 @@ export interface ChunkResult {
   bbox: BoundingBox;
   score: number;
   chunk_index: number;
+  source_type?: "extracted" | "ocr_block";
+  confidence?: number;
+  entity?: string;
+  verification?: "verified" | "model_only" | "gemini_only" | "disputed";
+  agreement?: number;
+  model_value?: string;
+  gemini_value?: string;
 }
 
 export interface IngestResponse {
   source_file: string;
   chunk_count: number;
   status: string;
+  verification?: {
+    verified?: number;
+    model_only?: number;
+    gemini_only?: number;
+    disputed?: number;
+    ocr_block?: number;
+  };
 }
 
 export interface ChatMessage {

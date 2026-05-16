@@ -5,10 +5,34 @@ _REFUSAL = "Δεν βρέθηκε στο έγγραφο."
 
 _SYSTEM_PROMPT = (
     "You are a precise invoice analysis assistant. "
-    "Answer ONLY using the provided context. "
+    "Answer ONLY using the provided context. Each context line is tagged with "
+    "its trust level:\n"
+    "  [verified]     — two independent extractors agree. Use these as ground truth.\n"
+    "  [model_only]   — fine-tuned extractor only. Trust for IDs/dates/names; "
+    "be cautious with amounts.\n"
+    "  [gemini_only]  — VLM only. Reasonable but unverified.\n"
+    "  [disputed]     — sources disagree. The line shows both values separated by ⟂. "
+    "Mention BOTH possibilities and that they conflict; do NOT pick one silently.\n"
+    "  [ocr_block]    — raw OCR text. Use only when no extracted line answers the question.\n"
     f"If the answer is not explicitly present in the context, respond with exactly: '{_REFUSAL}' "
-    "Do not add information not present in the context."
+    "Never invent or normalize values that are not literally in the context."
 )
+
+
+def _format_chunk(c: dict) -> str:
+    meta = c.get("metadata", {})
+    src = meta.get("source_type", "ocr_block")
+    ctype = meta.get("chunk_type", "chunk")
+    verification = meta.get("verification", "model_only")
+    if src == "extracted":
+        tag = f"[{verification}/{ctype}"
+        conf = meta.get("confidence")
+        if isinstance(conf, (int, float)):
+            tag += f" conf={conf:.2f}"
+        tag += "]"
+    else:
+        tag = f"[{src}/{ctype}]"
+    return f"{tag} {c['text']}"
 
 
 class LLMService:
@@ -19,10 +43,7 @@ class LLMService:
         )
 
     def generate_answer(self, query: str, context_chunks: list[dict]) -> dict:
-        context = "\n\n".join(
-            f"[{c['metadata'].get('chunk_type', 'chunk')}] {c['text']}"
-            for c in context_chunks
-        )
+        context = "\n\n".join(_format_chunk(c) for c in context_chunks)
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -42,10 +63,7 @@ class LLMService:
         return {"answer": answer, "refused": refused}
 
     def generate_chat_answer(self, messages: list[dict], context_chunks: list[dict]) -> dict:
-        context = "\n\n".join(
-            f"[{c['metadata'].get('chunk_type', 'chunk')}] {c['text']}"
-            for c in context_chunks
-        )
+        context = "\n\n".join(_format_chunk(c) for c in context_chunks)
 
         system = f"{_SYSTEM_PROMPT}\n\nContext from invoice:\n{context}"
         full_messages = [{"role": "system", "content": system}] + messages

@@ -56,20 +56,29 @@ class ChromaEmbedder:
                 "chunk_type": c["chunk_type"],
                 "chunk_index": c["chunk_index"],
                 "text": c["text"],
+                "source_type": c.get("source_type", "ocr_block"),
+                "confidence": float(c.get("confidence", 1.0)),
+                "entity": c.get("entity", ""),
+                "verification": c.get("verification", "model_only"),
+                "agreement": float(c.get("agreement", 0.0)),
+                "model_value": c.get("model_value", ""),
+                "gemini_value": c.get("gemini_value", ""),
             }
             for c in chunks
         ]
 
         self._collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas, documents=texts)
 
-    def query(self, text: str, n_results: int = 5, where: dict | None = None) -> list[dict]:
+    def query(self, text: str, n_results: int = 5, where: dict | None = None,
+              boost_extracted: bool = True) -> list[dict]:
         count = self._collection.count()
         if count == 0:
             return []
-        n_results = min(n_results, count)
+        # over-fetch so we can promote model-extracted chunks to the top
+        fetch_k = min(max(n_results * 3, n_results), count)
 
         embedding = self._embed([text])[0]
-        kwargs: dict = {"query_embeddings": [embedding], "n_results": n_results}
+        kwargs: dict = {"query_embeddings": [embedding], "n_results": fetch_k}
         if where:
             kwargs["where"] = where
 
@@ -83,7 +92,22 @@ class ChromaEmbedder:
                 results["documents"][0],
             ):
                 output.append({"text": doc, "metadata": meta, "distance": dist})
-        return output
+
+        if boost_extracted:
+            # Trust ladder: verified ≫ model_only ≫ gemini_only ≫ ocr_block ≫ disputed.
+            # Stable sort, breaking ties by vector distance.
+            tier = {"verified": 0, "model_only": 1, "gemini_only": 2,
+                    "model_or_ocr": 3, "disputed": 4}
+
+            def _rank(item: dict) -> tuple[int, float]:
+                meta = item["metadata"]
+                if meta.get("source_type") == "extracted":
+                    v = meta.get("verification", "model_only")
+                    return tier.get(v, 1), item["distance"]
+                return 3, item["distance"]
+
+            output.sort(key=_rank)
+        return output[:n_results]
 
     def delete_by_source(self, source_file: str) -> None:
         try:

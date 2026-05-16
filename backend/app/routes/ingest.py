@@ -97,6 +97,16 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         )
         raise
 
+    # Verification breakdown — surfaced to the user so they can see how much
+    # of this invoice is dual-sourced vs. model-only.
+    counts = {"verified": 0, "model_only": 0, "gemini_only": 0,
+              "disputed": 0, "ocr_block": 0}
+    for c in chunks:
+        if c.get("source_type") == "ocr_block":
+            counts["ocr_block"] += 1
+        else:
+            counts[c.get("verification", "model_only")] += 1
+
     record_event(
         request,
         "ingest",
@@ -106,10 +116,16 @@ async def ingest(request: Request, file: UploadFile = File(...)):
             "source_file": file.filename,
             "chunk_count": len(chunks),
             "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+            **counts,
         },
     )
 
-    return {"source_file": file.filename, "chunk_count": len(chunks), "status": "ok"}
+    return {
+        "source_file": file.filename,
+        "chunk_count": len(chunks),
+        "status": "ok",
+        "verification": counts,
+    }
 
 
 @router.get("/sources")

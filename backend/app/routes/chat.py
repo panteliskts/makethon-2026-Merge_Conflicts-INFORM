@@ -32,6 +32,13 @@ def _build_chunk_result(item: dict) -> ChunkResult:
         text=item["text"],
         score=1.0 - float(item["distance"]),
         chunk_index=int(meta.get("chunk_index", 0)),
+        source_type=str(meta.get("source_type", "ocr_block")),
+        confidence=float(meta.get("confidence", 1.0)),
+        entity=str(meta.get("entity", "")),
+        verification=str(meta.get("verification", "model_only")),
+        agreement=float(meta.get("agreement", 0.0)),
+        model_value=str(meta.get("model_value", "")),
+        gemini_value=str(meta.get("gemini_value", "")),
         bbox=BoundingBox(
             page_num=int(meta.get("page_num", 0)),
             x0=float(meta.get("x0", 0)),

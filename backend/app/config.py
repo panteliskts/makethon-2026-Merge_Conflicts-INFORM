@@ -14,5 +14,15 @@ class Settings(BaseSettings):
     gemini_embed_model: str = "gemini-embedding-001"
     gemini_chat_model: str = "gemini-2.0-flash"
 
+    # LayoutLMv3 invoice extractor
+    layoutlm_model_dir: str = "./models/layoutlmv3-invoice"
+    pdf_render_dpi: int = 200
+    extractor_confidence_threshold: float = 0.60
+
+    # Cross-validation at ingest: 1 extra Gemini call per page to verify the
+    # model's structured fields. Best-effort: failures fall back to model-only.
+    cross_validate_ingest: bool = True
+    cross_validate_fuzzy_threshold: float = 0.80
+
 
 settings = Settings()

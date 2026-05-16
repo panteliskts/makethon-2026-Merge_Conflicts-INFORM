@@ -36,6 +36,14 @@ app.include_router(admin.router, prefix="/api")
 async def startup():
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.chroma_persist_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        from .services import inference
+        inference.load_model(settings.layoutlm_model_dir)
+    except Exception as exc:
+        logger.warning(
+            "LayoutLMv3 model failed to load at startup (will retry on first ingest): %s",
+            exc,
+        )
     logger.info("INFORM Invoice Intelligence API ready")
 
 

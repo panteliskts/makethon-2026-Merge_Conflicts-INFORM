@@ -11,6 +11,25 @@ interface Message {
   grounded?: boolean;
 }
 
+type Verification = "verified" | "model_only" | "gemini_only" | "disputed";
+
+const VERIFY_STYLE: Record<Verification, { label: string; icon: string; fg: string; bg: string; border: string }> = {
+  verified:    { label: "Verified",   icon: "✓✓", fg: "#10b981", bg: "rgba(16,185,129,0.12)",  border: "rgba(16,185,129,0.35)" },
+  model_only:  { label: "Model",      icon: "✓",  fg: "#38bd82", bg: "rgba(56,189,130,0.10)",  border: "rgba(56,189,130,0.30)" },
+  gemini_only: { label: "AI vision",  icon: "~",  fg: "#60a5fa", bg: "rgba(59,130,246,0.12)",  border: "rgba(59,130,246,0.35)" },
+  disputed:    { label: "Disputed",   icon: "⚠",  fg: "#f59e0b", bg: "rgba(245,158,11,0.12)",  border: "rgba(245,158,11,0.40)" },
+};
+
+function summarizeVerification(chunks: ChunkResult[]): Verification | null {
+  const extracted = chunks.filter((c) => c.source_type === "extracted" && c.verification);
+  if (extracted.length === 0) return null;
+  if (extracted.some((c) => c.verification === "disputed")) return "disputed";
+  if (extracted.every((c) => c.verification === "verified")) return "verified";
+  if (extracted.some((c) => c.verification === "verified")) return "verified";
+  if (extracted.some((c) => c.verification === "model_only")) return "model_only";
+  return "gemini_only";
+}
+
 interface Props {
   onChunksHighlight: (chunks: ChunkResult[]) => void;
   onPdfLoad: (url: string, filename: string) => void;
@@ -49,11 +68,20 @@ export default function ChatPanel({
       onSourceFileChange(result.source_file);
       const url = `${API_BASE}/uploads/${encodeURIComponent(result.source_file)}`;
       onPdfLoad(url, result.source_file);
+      const v = result.verification ?? {};
+      const breakdown: string[] = [];
+      if (v.verified) breakdown.push(`${v.verified} verified ✓✓`);
+      if (v.model_only) breakdown.push(`${v.model_only} model-only ✓`);
+      if (v.gemini_only) breakdown.push(`${v.gemini_only} AI-vision ~`);
+      if (v.disputed) breakdown.push(`${v.disputed} disputed ⚠`);
+      const trailer = breakdown.length
+        ? `\n\nExtraction status: ${breakdown.join(" · ")}`
+        : "";
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: `Uploaded ${result.source_file}. ${result.chunk_count} sections indexed. You can now ask questions about this invoice.`,
+          content: `Uploaded ${result.source_file}. ${result.chunk_count} sections indexed. You can now ask questions about this invoice.${trailer}`,
           grounded: true,
         },
       ]);
@@ -93,8 +121,16 @@ export default function ChatPanel({
         },
       ]);
 
-      if (res.chunks.length > 0) {
-        onChunksHighlight(res.chunks);
+      if (res.chunks.length > 0 && !res.refused) {
+        // Only highlight the primary source — the backend already ranks
+        // verified ≫ model_only ≫ gemini_only ≫ ocr_block, so chunks[0]
+        // is the chunk the system decided drove the answer.
+        const primary = res.chunks.find(
+          (c) => c.bbox.x1 - c.bbox.x0 > 0 && c.bbox.y1 - c.bbox.y0 > 0,
+        );
+        onChunksHighlight(primary ? [primary] : []);
+      } else {
+        onChunksHighlight([]);
       }
     } catch {
       setMessages((prev) => [
@@ -201,24 +237,76 @@ export default function ChatPanel({
                   Low confidence
                 </div>
               )}
+
+              {/* Verification summary chip — the headline trust signal */}
+              {msg.role === "assistant" && !msg.refused && msg.chunks && (() => {
+                const v = summarizeVerification(msg.chunks);
+                if (!v) return null;
+                const style = VERIFY_STYLE[v];
+                return (
+                  <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                    style={{ background: style.bg, borderColor: style.border, color: style.fg }}>
+                    <span className="font-mono">{style.icon}</span> {style.label}
+                  </div>
+                );
+              })()}
+
               <p className="whitespace-pre-wrap">{msg.content}</p>
 
               {msg.chunks && msg.chunks.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-card-border/40">
-                  <p className="mb-2 text-[11px] font-medium" style={{ color: "var(--color-text-secondary)" }}>Sources</p>
+                  <p className="mb-2 text-[11px] font-medium" style={{ color: "var(--color-text-secondary)" }}>
+                    Sources · click to highlight
+                  </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {msg.chunks.slice(0, 4).map((chunk, ci) => (
-                      <button key={ci} onClick={() => onChunksHighlight([chunk])}
-                        className="pressable focus-ring rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors"
-                        style={{
-                          background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
-                          borderColor: "color-mix(in srgb, var(--color-accent) 28%, transparent)",
-                          color: "var(--color-accent)",
-                        }}>
-                        p.{chunk.bbox.page_num + 1} · {chunk.bbox.chunk_type}
-                      </button>
-                    ))}
+                    {msg.chunks.slice(0, 4).map((chunk, ci) => {
+                      const v = (chunk.source_type === "extracted" && chunk.verification
+                        ? chunk.verification
+                        : null) as Verification | null;
+                      const style = v ? VERIFY_STYLE[v] : null;
+                      const confPct = chunk.confidence != null ? Math.round(chunk.confidence * 100) : null;
+                      return (
+                        <button key={ci} onClick={() => onChunksHighlight([chunk])}
+                          title={v === "disputed"
+                            ? `Model: ${chunk.model_value || "—"}\nGemini: ${chunk.gemini_value || "—"}`
+                            : `${chunk.text}`}
+                          className="pressable focus-ring rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors"
+                          style={style
+                            ? { background: style.bg, borderColor: style.border, color: style.fg }
+                            : {
+                                background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
+                                borderColor: "color-mix(in srgb, var(--color-accent) 28%, transparent)",
+                                color: "var(--color-accent)",
+                              }}>
+                          {style && <span className="mr-1 font-mono">{style.icon}</span>}
+                          p.{chunk.bbox.page_num + 1} · {chunk.bbox.chunk_type}
+                          {confPct != null && v && <span className="ml-1 opacity-70">{confPct}%</span>}
+                        </button>
+                      );
+                    })}
                   </div>
+
+                  {/* If any source is disputed, surface the conflict explicitly */}
+                  {msg.chunks.some((c) => c.verification === "disputed") && (
+                    <div className="mt-3 rounded-md border p-2 text-[11px]"
+                      style={{ borderColor: "rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.06)" }}>
+                      <p className="mb-1 font-semibold" style={{ color: "#f59e0b" }}>
+                        ⚠ Conflicting evidence for this field
+                      </p>
+                      {msg.chunks
+                        .filter((c) => c.verification === "disputed")
+                        .slice(0, 3)
+                        .map((c, di) => (
+                          <div key={di} className="mt-1 grid grid-cols-[80px_1fr] gap-x-2 leading-snug">
+                            <span className="text-text-secondary">{c.bbox.chunk_type}</span>
+                            <span>
+                              <span className="opacity-70">model:</span> {c.model_value || "—"}<br />
+                              <span className="opacity-70">vision:</span> {c.gemini_value || "—"}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
