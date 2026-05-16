@@ -66,6 +66,61 @@ confirm_overwrite() {
   fi
 }
 
+validate_inputs() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required to validate the Supabase URLs." >&2
+    exit 1
+  fi
+
+  python3 - "$SUPABASE_URL" "$SUPABASE_DB_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+supabase_url = sys.argv[1].strip()
+db_url = sys.argv[2].strip()
+
+project = urlparse(supabase_url)
+db = urlparse(db_url)
+errors = []
+
+project_host = project.hostname or ""
+project_ref = project_host.split(".")[0] if project_host.endswith(".supabase.co") else ""
+
+if project.scheme != "https" or not project_ref:
+    errors.append("SUPABASE_URL must look like https://<project-ref>.supabase.co")
+
+if db.scheme not in {"postgresql", "postgres"}:
+    errors.append("SUPABASE_DB_URL must start with postgresql://")
+
+db_host = db.hostname or ""
+if "pooler.supabase.com" not in db_host:
+    errors.append(
+        "SUPABASE_DB_URL must be the Session pooler URL from Supabase Dashboard > Connect, "
+        "not the direct db.<project-ref>.supabase.co URL."
+    )
+
+if db.port not in {5432, 6543}:
+    errors.append("SUPABASE_DB_URL should use port 5432 or 6543.")
+
+if not db.username or not db.password:
+    errors.append("SUPABASE_DB_URL must include username and password.")
+
+if project_ref and db.username and db.username != f"postgres.{project_ref}":
+    errors.append("SUPABASE_DB_URL username should look like postgres.<project-ref>.")
+
+if db.path.strip("/") != "postgres":
+    errors.append("SUPABASE_DB_URL database path should be /postgres.")
+
+if errors:
+    print("ERROR: invalid Supabase connection settings:", file=sys.stderr)
+    for error in errors:
+        print(f"  - {error}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Copy the Session pooler string from Supabase Dashboard > Connect.", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 echo "==> Creating local env files for INFORM"
 echo "These files stay local and are ignored by Git."
 echo ""
@@ -82,6 +137,8 @@ NEXTAUTH_SECRET="${NEXTAUTH_SECRET:-$(generate_secret)}"
 NEXT_PUBLIC_SUPABASE_URL="$(read_value NEXT_PUBLIC_SUPABASE_URL "Frontend Supabase URL" "$SUPABASE_URL")"
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$(read_value NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY "Supabase publishable/anon key")"
 NEXT_PUBLIC_API_BASE_URL="$(read_value NEXT_PUBLIC_API_BASE_URL "Backend API URL" "http://127.0.0.1:8000")"
+
+validate_inputs
 
 mkdir -p "$ROOT/backend" "$ROOT/frontend"
 umask 077

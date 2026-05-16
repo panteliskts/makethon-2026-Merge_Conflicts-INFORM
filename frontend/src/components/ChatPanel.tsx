@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect, KeyboardEvent } from "react";
+import { useRef, useState, useEffect, KeyboardEvent, DragEvent } from "react";
 import { sendChat, getUsage, type ChatMessage, type ChunkResult, type UsageResponse } from "@/lib/api";
 
 interface Message {
@@ -14,24 +14,40 @@ interface Message {
 interface Props {
   sourceFile: string | null;
   onChunksHighlight: (chunks: ChunkResult[]) => void;
+  onAttachClick: () => void;          // opens file picker in InvoiceDataPanel
+  onFileDrop: (files: FileList) => void; // drag-drop upload from chat area
 }
 
-export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
+const STANDARD_PROMPTS = [
+  "What is the total amount due?",
+  "What is the invoice date and due date?",
+  "Who is the vendor and their contact info?",
+  "List all line items and amounts",
+  "What are the payment terms and bank details?",
+  "What is the VAT / tax amount?",
+];
+
+export default function ChatPanel({
+  sourceFile,
+  onChunksHighlight,
+  onAttachClick,
+  onFileDrop,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dragCounterRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
-      try {
-        const u = await getUsage();
-        if (!cancelled) setUsage(u);
-      } catch { /* backend may not be ready */ }
+      try { const u = await getUsage(); if (!cancelled) setUsage(u); } catch { /* not ready */ }
     };
     poll();
     const id = setInterval(poll, 15_000);
@@ -42,16 +58,21 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  async function handleSend() {
-    const text = input.trim();
-    if (!text || loading) return;
+  async function handleSend(text?: string) {
+    const msg = (text ?? input).trim();
+    if (!msg || loading) return;
 
-    const userMsg: Message = { role: "user", content: text };
+    const userMsg: Message = { role: "user", content: msg };
     const history: Message[] = [...messages, userMsg];
     setMessages(history);
     setInput("");
     setError(null);
     setLoading(true);
+
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
 
     try {
       const apiMessages: ChatMessage[] = history
@@ -59,7 +80,6 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
         .map((m) => ({ role: m.role, content: m.content }));
 
       const res = await sendChat(apiMessages, sourceFile ?? undefined);
-
       setMessages((prev) => [
         ...prev,
         {
@@ -70,7 +90,6 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
           grounded: res.grounded,
         },
       ]);
-
       if (res.chunks.length > 0) onChunksHighlight(res.chunks);
     } catch {
       setMessages((prev) => [
@@ -89,16 +108,51 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
     }
   }
 
+  // Drag-and-drop handlers on the whole panel
+  function onDragEnter(e: DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
+  }
+  function onDragLeave(e: DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) { dragCounterRef.current = 0; setIsDragOver(false); }
+  }
+  function onDragOver(e: DragEvent) { e.preventDefault(); }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    if (e.dataTransfer.files.length > 0) onFileDrop(e.dataTransfer.files);
+  }
+
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+
+      {/* ── Drag-over overlay ──────────────────────────────────── */}
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-accent bg-accent/10 backdrop-blur-sm">
+          <svg className="h-10 w-10 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+          </svg>
+          <p className="text-sm font-semibold text-accent">Drop invoice to upload</p>
+          <p className="text-xs text-accent/70">PDF · JPG · PNG · multiple files supported</p>
+        </div>
+      )}
 
       {/* ── Toolbar ──────────────────────────────────────────────── */}
       <div className="flex shrink-0 items-center justify-between border-b border-card-border bg-sidebar px-4 py-3">
         <span className="text-sm font-semibold text-text-primary">Chat</span>
         <button
           onClick={() => setUsageOpen((o) => !o)}
-          className="pressable focus-ring flex items-center gap-1.5 rounded-md border border-card-border px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:border-accent/50 hover:text-text-primary"
-        >
+          className="pressable focus-ring flex items-center gap-1.5 rounded-md border border-card-border px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:border-accent/50 hover:text-text-primary">
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
@@ -176,24 +230,45 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
       {/* ── Messages ─────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
         {messages.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-            <div className="w-14 h-14 rounded-2xl border border-card-border bg-card flex items-center justify-center"
-              style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.07)" }}>
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}
-                style={{ color: "var(--color-accent)" }}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
+          <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
             <div>
+              <div className="mx-auto mb-3 w-14 h-14 rounded-2xl border border-card-border bg-card flex items-center justify-center"
+                style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.07)" }}>
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}
+                  style={{ color: "var(--color-accent)" }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </div>
               <p className="text-sm font-semibold text-text-primary">
                 {sourceFile ? "Ready — ask about this invoice" : "Upload an invoice to begin"}
               </p>
               <p className="mt-1 text-sm leading-relaxed text-text-secondary">
                 {sourceFile
-                  ? "Click a source chip to preview the document section."
-                  : "Use the panel on the left to upload a PDF, JPG, or PNG."}
+                  ? "Choose a suggested question or type your own below."
+                  : "Use the attach button (📎) next to the input to upload a PDF, JPG, or PNG."}
               </p>
             </div>
+
+            {/* Standard prompt chips */}
+            {sourceFile && (
+              <div className="flex w-full max-w-sm flex-wrap justify-center gap-2">
+                {STANDARD_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => handleSend(prompt)}
+                    disabled={loading}
+                    className="pressable focus-ring rounded-full border px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                    style={{
+                      borderColor: "color-mix(in srgb, var(--color-accent) 25%, transparent)",
+                      color: "color-mix(in srgb, var(--color-accent) 80%, var(--color-text-primary))",
+                      background: "color-mix(in srgb, var(--color-accent) 6%, transparent)",
+                    }}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -263,10 +338,44 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Input ────────────────────────────────────────────────── */}
+      {/* ── Input row ────────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-card-border bg-sidebar px-4 py-3">
+
+        {/* Suggested prompts above input (when messages exist but input empty) */}
+        {messages.length > 0 && sourceFile && !loading && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {STANDARD_PROMPTS.slice(0, 3).map((prompt) => (
+              <button
+                key={prompt}
+                onClick={() => handleSend(prompt)}
+                disabled={loading}
+                className="pressable focus-ring rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--color-accent) 20%, transparent)",
+                  color: "color-mix(in srgb, var(--color-accent) 80%, var(--color-text-secondary))",
+                  background: "color-mix(in srgb, var(--color-accent) 5%, transparent)",
+                }}
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          {/* Attach / upload button */}
+          <button
+            onClick={onAttachClick}
+            title="Attach invoice (PDF, JPG, PNG)"
+            className="pressable focus-ring shrink-0 rounded-xl border border-card-border bg-card p-3 text-text-secondary transition-colors hover:border-accent/50 hover:text-accent"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+            </svg>
+          </button>
+
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -283,8 +392,9 @@ export default function ChatPanel({ sourceFile, onChunksHighlight }: Props) {
             onFocus={(e) => { e.currentTarget.style.borderColor = "var(--color-accent)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = ""; }}
           />
+
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!input.trim() || loading || !sourceFile}
             aria-label="Send message"
             className="pressable focus-ring shrink-0 rounded-md bg-accent p-3 text-ink hover:bg-accent-hover disabled:opacity-40"
