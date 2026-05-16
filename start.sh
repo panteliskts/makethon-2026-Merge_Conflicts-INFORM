@@ -60,6 +60,13 @@ find_free_port() {
   echo "$port"
 }
 
+url_host_for_bind_host() {
+  case "$1" in
+    0.0.0.0|::) echo "127.0.0.1" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 cleanup() {
   echo ""
   echo "==> Stopping servers..."
@@ -92,8 +99,10 @@ fi
 
 REQUESTED_BACKEND_PORT="${BACKEND_PORT:-8000}"
 REQUESTED_FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
-FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
+BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
+FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+BACKEND_URL_HOST="${BACKEND_URL_HOST:-$(url_host_for_bind_host "$BACKEND_HOST")}"
+FRONTEND_URL_HOST="${FRONTEND_URL_HOST:-$(url_host_for_bind_host "$FRONTEND_HOST")}"
 PYTHON_BIN="$(find_python)"
 
 BACKEND_PORT="$(find_free_port "$BACKEND_HOST" "$REQUESTED_BACKEND_PORT")"
@@ -107,9 +116,9 @@ if [ "$FRONTEND_PORT" != "$REQUESTED_FRONTEND_PORT" ]; then
   echo "Frontend port $REQUESTED_FRONTEND_PORT is in use; using $FRONTEND_PORT instead."
 fi
 
-BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
-FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}"
-FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT}"
+BACKEND_URL="http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
+FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
+FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}"
 
 # Backend
 echo "==> Starting backend..."
@@ -154,8 +163,8 @@ NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" npm run dev
 FRONTEND_PID=$!
 
 echo ""
-echo "  Backend  -> $BACKEND_URL"
-echo "  Frontend -> $FRONTEND_URL"
+echo "  Backend  -> $BACKEND_URL (listening on ${BACKEND_HOST}:${BACKEND_PORT})"
+echo "  Frontend -> $FRONTEND_URL (listening on ${FRONTEND_HOST}:${FRONTEND_PORT})"
 echo ""
 echo "Press Ctrl+C to stop both servers."
 
