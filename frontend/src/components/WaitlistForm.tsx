@@ -42,10 +42,10 @@ export function WaitlistForm() {
   }
 
   const inputCls =
-    "w-full rounded-md border px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-[var(--color-accent)]";
+    "w-full rounded-md border px-3 py-2.5 text-sm text-white placeholder:text-white/60 outline-none transition-colors focus:border-[var(--color-accent)]";
   const inputStyle = {
-    background: "rgba(255,255,255,0.04)",
-    borderColor: "rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.35)",
   };
 
   if (submitted) {
@@ -67,7 +67,7 @@ export function WaitlistForm() {
         <h2 className="mb-1.5 text-2xl font-extrabold text-white">
           Be first in line.
         </h2>
-        <p className="mb-2 text-sm" style={{ color: "#bdbdc6" }}>
+        <p className="mb-2 text-sm" style={{ color: "#e2e2ea" }}>
           Join the INFORM waitlist and get early access when we launch.
         </p>
       </div>
