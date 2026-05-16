@@ -131,10 +131,9 @@ FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
 FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}"
 
 # Backend
-echo "==> Starting backend..."
 cd "$ROOT/backend"
 if [ ! -d "venv" ]; then
-  echo "    Creating virtualenv with $PYTHON_BIN..."
+  echo "Creating Python virtualenv…"
   "$PYTHON_BIN" -m venv venv
 fi
 
@@ -150,26 +149,25 @@ else
   exit 1
 fi
 
-echo "    Using $(python --version 2>&1)"
-echo "    Installing Python packages; first run can take a few minutes..."
-python -m pip install -r requirements.txt
-CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT" &
+python -m pip install -q -r requirements.txt 2>&1 | grep -v "^$\|already satisfied\|notice\|WARNING: pip"
+CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload \
+  --host "$BACKEND_HOST" --port "$BACKEND_PORT" \
+  --log-level error \
+  2>&1 | grep -Ev "^$|Will watch|Started reloader|Started server|Application startup|Uvicorn running|INFO:|WARNING:" &
 BACKEND_PID=$!
 
 # Frontend
-echo "==> Starting frontend..."
 cd "$ROOT/frontend"
 if [ ! -d "node_modules" ]; then
-  echo "    Installing npm packages; first run can take a few minutes..."
-  npm install
+  echo "Installing npm packages…"
+  npm install --silent
 fi
 
-if [ -d ".next" ]; then
-  echo "    Clearing stale Next.js dev build..."
-  rm -rf .next
-fi
+rm -rf .next 2>/dev/null || true
 
-NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" &
+NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" \
+  npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
+  | grep -Ev "^\s*$|○ Compiling|✓ Compiled|✓ Starting|✓ Ready|▲ Next|- Local|- Network|- Environments" &
 FRONTEND_PID=$!
 
 echo ""

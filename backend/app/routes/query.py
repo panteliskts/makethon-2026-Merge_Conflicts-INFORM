@@ -79,11 +79,11 @@ async def query_endpoint(req: QueryRequest, request: Request):
     top_k = min(req.top_k, settings.top_k)
     email = _tenant_email(request)
 
+    pool = db.get_pool()
     tenant_id: str | None = None
     document_id: str | None = None
 
     if db.db_available():
-        pool = db.get_pool()
         tenant_id = await db.get_or_create_tenant(pool, email)
         if req.source_file:
             doc = await db.get_document_by_filename(pool, tenant_id, req.source_file)
@@ -92,7 +92,6 @@ async def query_endpoint(req: QueryRequest, request: Request):
 
     try:
         if db.db_available():
-            # Fetch larger candidate pool when reranker is on.
             retrieve_k = settings.top_k_retrieve if settings.reranker_enabled else top_k
             chunks = await emb_svc.hybrid_search(
                 pool, req.query, tenant_id, document_id, top_k,

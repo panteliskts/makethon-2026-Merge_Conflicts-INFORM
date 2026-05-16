@@ -69,11 +69,11 @@ async def chat_endpoint(req: ChatRequest, request: Request):
     email = _tenant_email(request)
 
     # ── Resolve tenant + document_id ──────────────────────────────────────────
+    pool = db.get_pool()
     tenant_id: str | None = None
     document_id: str | None = None
 
     if db.db_available():
-        pool = db.get_pool()
         tenant_id = await db.get_or_create_tenant(pool, email)
         if req.source_file:
             doc = await db.get_document_by_filename(pool, tenant_id, req.source_file)
@@ -125,7 +125,6 @@ async def chat_endpoint(req: ChatRequest, request: Request):
 
     # ── Persist messages to DB ────────────────────────────────────────────────
     if db.db_available() and tenant_id:
-        pool = db.get_pool()
         chunk_ids = [c["id"] for c in chunks if "id" in c]
         try:
             await db.save_message(pool, tenant_id, document_id, "user", last_query)

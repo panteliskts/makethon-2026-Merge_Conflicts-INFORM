@@ -30,12 +30,31 @@ _RRF_K = 60
 
 # ── Embedding API ─────────────────────────────────────────────────────────────
 
-async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+_MAX_EMBED_CHARS = 8_000  # Gemini per-item character limit
+_MAX_BATCH_SIZE = 100    # Gemini batchEmbedContents hard cap
+
+
+def _clean_texts(texts: list[str]) -> list[str]:
     """
-    Embed a batch of texts via Gemini, returning 768-dim vectors.
-    task_type: "RETRIEVAL_DOCUMENT" for storage, "RETRIEVAL_QUERY" for queries.
+    Sanitise texts before sending to the embedding API:
+    - Replace empty/whitespace-only strings with a single space so the
+      batch index alignment is preserved.
+    - Truncate anything over the per-item character limit.
+    - Strip NUL bytes and other control characters the API rejects.
     """
-    url = _EMBED_URL.format(model=settings.gemini_embed_model, key=settings.gemini_api_key)
+    cleaned = []
+    for t in texts:
+        t = t.replace("\x00", "").strip()
+        if not t:
+            t = " "  # placeholder keeps index alignment
+        if len(t) > _MAX_EMBED_CHARS:
+            t = t[:_MAX_EMBED_CHARS]
+        cleaned.append(t)
+    return cleaned
+
+
+async def _embed_batch(client: httpx.AsyncClient, texts: list[str], task_type: str, url: str) -> list[list[float]]:
+    """Send one batch (≤100 items) with retry on 429."""
     payload = {
         "requests": [
             {
@@ -47,21 +66,40 @@ async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list
             for t in texts
         ]
     }
-
     delay = 1.0
-    async with httpx.AsyncClient(timeout=60) as client:
-        for attempt in range(4):
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 429:
-                if attempt == 3:
-                    resp.raise_for_status()
-                await asyncio.sleep(delay)
-                delay *= 2
-                continue
-            resp.raise_for_status()
-            return [e["values"] for e in resp.json()["embeddings"]]
+    for attempt in range(4):
+        resp = await client.post(url, json=payload)
+        if resp.status_code == 429:
+            if attempt == 3:
+                resp.raise_for_status()
+            await asyncio.sleep(delay)
+            delay *= 2
+            continue
+        if resp.status_code == 400:
+            detail = resp.text[:500]
+            raise ValueError(f"Gemini embedding API rejected the request (400): {detail}")
+        resp.raise_for_status()
+        return [e["values"] for e in resp.json()["embeddings"]]
+    raise RuntimeError("Embedding failed after retries")
 
-    raise RuntimeError("Embedding failed after retries")  # unreachable
+
+async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+    """
+    Embed texts via Gemini in batches of up to 100 (API hard limit).
+    task_type: "RETRIEVAL_DOCUMENT" for storage, "RETRIEVAL_QUERY" for queries.
+    """
+    if not texts:
+        return []
+
+    texts = _clean_texts(texts)
+    url = _EMBED_URL.format(model=settings.gemini_embed_model, key=settings.gemini_api_key)
+
+    results: list[list[float]] = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        for i in range(0, len(texts), _MAX_BATCH_SIZE):
+            batch = texts[i : i + _MAX_BATCH_SIZE]
+            results.extend(await _embed_batch(client, batch, task_type, url))
+    return results
 
 
 def _vec_literal(embedding: list[float]) -> str:

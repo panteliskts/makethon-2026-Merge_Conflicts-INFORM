@@ -132,7 +132,7 @@ interface Props {
   sources: UploadedSource[];
   activeIndex: number;
   onSelectSource: (index: number) => void;
-  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  fileInputRef: React.RefObject<HTMLInputElement>;
   uploading: boolean;
   uploadError: string | null;
   onFilesSelected: (files: FileList) => void;
