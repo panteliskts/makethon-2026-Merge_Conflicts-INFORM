@@ -2,9 +2,10 @@ import time
 from fastapi import APIRouter, Request
 from ..config import settings
 from ..models import QueryRequest, QueryResponse, ChunkResult, BoundingBox
-from ..services.embedder import ChromaEmbedder
-from ..services.llm import LLMService
+from ..services import embedder as emb_svc
+from ..services.llm import LLMService, _REFUSAL
 from ..services.telemetry import record_event, record_exception
+from ..services import database as db
 
 router = APIRouter()
 
@@ -15,17 +16,8 @@ _metrics = {
     "total_latency_ms": 0.0,
 }
 
-_embedder: ChromaEmbedder | None = None
 _llm: LLMService | None = None
-
-_SCORE_THRESHOLD = 0.35  # cosine similarity minimum for "grounded"
-
-
-def _get_embedder() -> ChromaEmbedder:
-    global _embedder
-    if _embedder is None:
-        _embedder = ChromaEmbedder()
-    return _embedder
+_SCORE_THRESHOLD = 0.35
 
 
 def _get_llm() -> LLMService:
@@ -39,11 +31,15 @@ def get_metrics() -> dict:
     return _metrics.copy()
 
 
+def _tenant_email(request: Request) -> str:
+    return request.headers.get("x-inform-user-email", "demo@inform.app")
+
+
 def _build_chunk_result(item: dict) -> ChunkResult:
-    meta = item["metadata"]
+    meta = item.get("metadata", item)
     return ChunkResult(
         text=item["text"],
-        score=1.0 - float(item["distance"]),
+        score=float(item.get("score", item.get("vector_score", 1.0))),
         chunk_index=int(meta.get("chunk_index", 0)),
         bbox=BoundingBox(
             page_num=int(meta.get("page_num", 0)),
@@ -58,47 +54,52 @@ def _build_chunk_result(item: dict) -> ChunkResult:
 
 
 def _local_grounding_check(answer: str, chunks: list[dict]) -> bool:
-    """
-    Local grounding check — no second LLM call.
-    Passes when:
-    - at least one chunk was retrieved
-    - the top chunk score is above threshold
-    - the answer does not look like a refusal
-    """
     if not chunks:
         return False
-    top_score = 1.0 - float(chunks[0].get("distance", 1.0))
+    top_score = float(chunks[0].get("vector_score", 0.0))
     if top_score < _SCORE_THRESHOLD:
         return False
-    from ..services.llm import _REFUSAL
-    if _REFUSAL in answer:
-        return False
-    return True
+    return _REFUSAL not in answer
 
 
 @router.post("/query", response_model=QueryResponse)
 async def query_endpoint(req: QueryRequest, request: Request):
     t0 = time.monotonic()
     top_k = min(req.top_k, settings.top_k)
-    where = {"source_file": req.source_file} if req.source_file else None
+    email = _tenant_email(request)
+
+    tenant_id: str | None = None
+    document_id: str | None = None
+
+    if db.db_available():
+        pool = db.get_pool()
+        tenant_id = await db.get_or_create_tenant(pool, email)
+        if req.source_file:
+            doc = await db.get_document_by_filename(pool, tenant_id, req.source_file)
+            if doc:
+                document_id = str(doc["id"])
 
     try:
-        chunks = _get_embedder().query(req.query, n_results=top_k, where=where)
-        result = _get_llm().generate_answer(req.query, chunks, source_file=req.source_file)
+        if db.db_available():
+            chunks = await emb_svc.hybrid_search(
+                pool, req.query, tenant_id, document_id, top_k
+            )
+        else:
+            chunks = []
+
+        result = _get_llm().generate_answer(
+            req.query, chunks, source_file=req.source_file
+        )
         answer = result["answer"]
         refused = result["refused"]
         grounded = _local_grounding_check(answer, chunks)
+
     except Exception as exc:
         record_exception(
-            request,
-            "query",
-            "Query failed before grounding could complete",
-            exc,
-            metadata={
-                "source_file": req.source_file,
-                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-                "top_k": top_k,
-            },
+            request, "query", "Query failed", exc,
+            metadata={"source_file": req.source_file,
+                       "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                       "top_k": top_k},
         )
         raise
 
@@ -111,8 +112,7 @@ async def query_endpoint(req: QueryRequest, request: Request):
         _metrics["refused_count"] += 1
 
     record_event(
-        request,
-        "query",
+        request, "query",
         f"Query completed with {len(chunks)} retrieved chunks",
         status="ok" if grounded else "warning",
         metadata={

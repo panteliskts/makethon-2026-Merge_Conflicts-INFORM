@@ -1,39 +1,57 @@
+"""
+Embedding + retrieval layer backed by Postgres/pgvector.
+
+Replaces the previous ChromaDB implementation.
+
+Key design decisions
+────────────────────
+• Embeddings are 768-dimensional (Gemini gemini-embedding-001 with
+  outputDimensionality=768) — small enough for HNSW indexing, large
+  enough for invoice Q&A quality.
+• Hybrid search: vector cosine + Postgres full-text, fused with RRF
+  (k=60). This handles both semantic similarity AND exact matches for
+  amounts, IBANs, invoice numbers, etc.
+• All DB access takes an asyncpg.Pool argument — no module-level singletons.
+• 429 backoff on the Gemini embed API (1→2→4→8 s, max 4 attempts).
+"""
+
 import time
-import chromadb
-import requests
+import httpx
 from ..config import settings
 
-_EMBED_URL_TEMPLATE = (
+_EMBED_URL = (
     "https://generativelanguage.googleapis.com/v1beta"
-    "/models/{model}:batchEmbedContents?key={key}"
+    f"/models/{{model}}:batchEmbedContents?key={{key}}"
 )
 
+# RRF constant — higher k = less aggressive ranking difference between hits
+_RRF_K = 60
 
-class ChromaEmbedder:
-    def __init__(self):
-        self._client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
-        self._collection = self._client.get_or_create_collection(
-            name="invoices",
-            metadata={"hnsw:space": "cosine"},
-        )
 
-    def _embed(self, texts: list[str]) -> list[list[float]]:
-        url = _EMBED_URL_TEMPLATE.format(
-            model=settings.gemini_embed_model,
-            key=settings.gemini_api_key,
-        )
-        payload = {
-            "requests": [
-                {
-                    "model": f"models/{settings.gemini_embed_model}",
-                    "content": {"parts": [{"text": t}]},
-                }
-                for t in texts
-            ]
-        }
-        delay = 1.0
+# ── Embedding API ─────────────────────────────────────────────────────────────
+
+async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+    """
+    Embed a batch of texts via Gemini, returning 768-dim vectors.
+    task_type: "RETRIEVAL_DOCUMENT" for storage, "RETRIEVAL_QUERY" for queries.
+    """
+    url = _EMBED_URL.format(model=settings.gemini_embed_model, key=settings.gemini_api_key)
+    payload = {
+        "requests": [
+            {
+                "model": f"models/{settings.gemini_embed_model}",
+                "content": {"parts": [{"text": t}]},
+                "taskType": task_type,
+                "outputDimensionality": 768,
+            }
+            for t in texts
+        ]
+    }
+
+    delay = 1.0
+    async with httpx.AsyncClient(timeout=60) as client:
         for attempt in range(4):
-            resp = requests.post(url, json=payload, timeout=60)
+            resp = await client.post(url, json=payload)
             if resp.status_code == 429:
                 if attempt == 3:
                     resp.raise_for_status()
@@ -42,89 +60,115 @@ class ChromaEmbedder:
                 continue
             resp.raise_for_status()
             return [e["values"] for e in resp.json()["embeddings"]]
-        resp.raise_for_status()  # unreachable but satisfies type checker
 
-    def embed_chunks(self, chunks: list[dict]) -> None:
-        if not chunks:
-            return
-        texts = [c["text"] for c in chunks]
-        embeddings = self._embed(texts)
-        ids = [f"{c['source_file']}_{c['chunk_index']}" for c in chunks]
-        metadatas = [
-            {
-                "page_num": c["page_num"],
-                "x0": c["x0"],
-                "y0": c["y0"],
-                "x1": c["x1"],
-                "y1": c["y1"],
-                "source_file": c["source_file"],
-                "chunk_type": c["chunk_type"],
-                "chunk_index": c["chunk_index"],
-                "text": c["text"],
-                "file_hash": c.get("file_hash", ""),
-            }
-            for c in chunks
-        ]
-        self._collection.upsert(
-            ids=ids, embeddings=embeddings, metadatas=metadatas, documents=texts
-        )
+    raise RuntimeError("Embedding failed after retries")  # unreachable
 
-    def query(self, text: str, n_results: int = 5, where: dict | None = None) -> list[dict]:
-        count = self._collection.count()
-        if count == 0:
-            return []
-        n_results = min(n_results, count)
-        embedding = self._embed([text])[0]
-        kwargs: dict = {"query_embeddings": [embedding], "n_results": n_results}
-        if where:
-            kwargs["where"] = where
-        results = self._collection.query(**kwargs, include=["metadatas", "distances", "documents"])
-        output = []
-        if results["ids"] and results["ids"][0]:
-            for meta, dist, doc in zip(
-                results["metadatas"][0],
-                results["distances"][0],
-                results["documents"][0],
-            ):
-                output.append({"text": doc, "metadata": meta, "distance": dist})
-        return output
 
-    def get_by_source(self, source_file: str | None) -> list[dict]:
-        """Return all chunks for a source without any embedding API call."""
-        where = {"source_file": source_file} if source_file else None
-        kwargs: dict = {"include": ["metadatas", "documents"]}
-        if where:
-            kwargs["where"] = where
-        results = self._collection.get(**kwargs)
-        output = []
-        for meta, doc in zip(
-            results.get("metadatas") or [],
-            results.get("documents") or [],
-        ):
-            output.append({"text": doc, "metadata": meta})
-        return output
+def _vec_literal(embedding: list[float]) -> str:
+    """Convert a float list to a Postgres vector literal '[x,y,z,...]'."""
+    return "[" + ",".join(f"{v:.8f}" for v in embedding) + "]"
 
-    def source_hash(self, source_file: str) -> str | None:
-        """Return the stored file_hash for the given source, or None if not found."""
-        results = self._collection.get(
-            where={"source_file": source_file},
-            include=["metadatas"],
-            limit=1,
-        )
-        metas = results.get("metadatas") or []
-        if metas:
-            return metas[0].get("file_hash") or None
-        return None
 
-    def delete_by_source(self, source_file: str) -> None:
-        try:
-            self._collection.delete(where={"source_file": source_file})
-        except Exception:
-            pass
+# ── Hybrid search (vector + full-text, RRF fusion) ────────────────────────────
 
-    def list_sources(self) -> list[str]:
-        results = self._collection.get(include=["metadatas"])
-        seen: set[str] = set()
-        for meta in results["metadatas"]:
-            seen.add(meta.get("source_file", ""))
-        return sorted(s for s in seen if s)
+async def hybrid_search(
+    pool,
+    query: str,
+    tenant_id: str,
+    document_id: str | None,
+    top_k: int,
+) -> list[dict]:
+    """
+    Combine vector similarity and Postgres full-text ranking via RRF.
+    Returns up to *top_k* chunks ordered by fused score.
+    """
+    query_vec = (await embed([query], task_type="RETRIEVAL_QUERY"))[0]
+    vec_literal = _vec_literal(query_vec)
+
+    # $3 is nullable: NULL means "all documents for this tenant"
+    sql = """
+    WITH vector_hits AS (
+        SELECT
+            id,
+            ROW_NUMBER() OVER (
+                ORDER BY embedding <=> $1::vector
+            ) AS rank
+        FROM document_chunks
+        WHERE tenant_id = $2::uuid
+          AND ($3::uuid IS NULL OR document_id = $3::uuid)
+        ORDER BY embedding <=> $1::vector
+        LIMIT 20
+    ),
+    text_hits AS (
+        SELECT
+            id,
+            ROW_NUMBER() OVER (
+                ORDER BY ts_rank(search_vector, plainto_tsquery('english', $4)) DESC
+            ) AS rank
+        FROM document_chunks
+        WHERE tenant_id = $2::uuid
+          AND ($3::uuid IS NULL OR document_id = $3::uuid)
+          AND search_vector @@ plainto_tsquery('english', $4)
+        LIMIT 20
+    ),
+    rrf AS (
+        SELECT
+            COALESCE(v.id, t.id) AS id,
+            COALESCE(1.0 / ($5 + v.rank), 0.0)
+              + COALESCE(1.0 / ($5 + t.rank), 0.0) AS score
+        FROM vector_hits v
+        FULL OUTER JOIN text_hits t ON v.id = t.id
+    )
+    SELECT
+        dc.id::text,
+        dc.chunk_index,
+        dc.chunk_type,
+        dc.text,
+        dc.page_num,
+        dc.x0, dc.y0, dc.x1, dc.y1,
+        dc.document_id::text,
+        d.filename        AS source_file,
+        rrf.score,
+        1.0 - (dc.embedding <=> $1::vector) AS vector_score
+    FROM rrf
+    JOIN document_chunks dc ON dc.id = rrf.id
+    JOIN documents        d  ON d.id  = dc.document_id
+    ORDER BY rrf.score DESC
+    LIMIT $6
+    """
+
+    rows = await pool.fetch(
+        sql,
+        vec_literal,
+        tenant_id,
+        document_id,
+        query,
+        float(_RRF_K),
+        top_k,
+    )
+
+    return [
+        {
+            "text":        row["text"],
+            "chunk_type":  row["chunk_type"],
+            "chunk_index": row["chunk_index"],
+            "page_num":    row["page_num"],
+            "x0": row["x0"], "y0": row["y0"],
+            "x1": row["x1"], "y1": row["y1"],
+            "source_file": row["source_file"],
+            "document_id": row["document_id"],
+            "score":       float(row["score"]),
+            "vector_score": float(row["vector_score"]),
+            # Legacy key — LLM service reads this for grounding check
+            "distance":    1.0 - float(row["vector_score"]),
+            "metadata": {
+                "chunk_type":  row["chunk_type"],
+                "chunk_index": row["chunk_index"],
+                "page_num":    row["page_num"],
+                "x0": row["x0"], "y0": row["y0"],
+                "x1": row["x1"], "y1": row["y1"],
+                "source_file": row["source_file"],
+            },
+        }
+        for row in rows
+    ]

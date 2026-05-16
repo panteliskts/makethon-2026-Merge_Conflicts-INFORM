@@ -1,165 +1,243 @@
+"""
+Ingest route — upload an invoice (PDF / JPG / PNG), embed its chunks,
+and store everything in Supabase Postgres + Storage.
+
+Happy-path flow
+───────────────
+1. Read file bytes, compute SHA-256.
+2. Look up (tenant_id, file_hash) in documents table.
+   → Hit:  return cached chunk count + fresh signed URL. No LLM/embed call.
+   → Miss: continue.
+3. Upload raw file to Supabase Storage.
+4. Parse file into text chunks (PyMuPDF or Gemini Vision).
+5. Embed chunks via Gemini (768-dim, RETRIEVAL_DOCUMENT task type).
+6. Insert document row + chunk rows into Postgres.
+7. Return {source_file, document_id, chunk_count, preview_url}.
+
+Graceful degradation
+─────────────────────
+If SUPABASE_DB_URL or SUPABASE_URL are not set the route falls back to
+the old local-disk behaviour so local development still works without
+Supabase credentials.
+"""
+
 import hashlib
-import shutil
 import time
+import uuid
+import anyio
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+
 from ..config import settings
+from ..services import embedder as emb_svc
 from ..services.chunker import extract_chunks
-from ..services.embedder import ChromaEmbedder
 from ..services.telemetry import record_event, record_exception
+from ..services import database as db
+from ..services import storage as store
 
 router = APIRouter()
-_embedder: ChromaEmbedder | None = None
 
 _ALLOWED_EXTS = {".pdf", ".jpg", ".jpeg", ".png"}
 
 
-def get_embedder() -> ChromaEmbedder:
-    global _embedder
-    if _embedder is None:
-        _embedder = ChromaEmbedder()
-    return _embedder
+def _tenant_email(request: Request) -> str:
+    return request.headers.get("x-inform-user-email", "demo@inform.app")
 
 
 @router.post("/ingest")
 async def ingest(request: Request, file: UploadFile = File(...)):
     t0 = time.monotonic()
-    file_ext = Path(file.filename).suffix.lower() if file.filename else ""
+
+    # ── Validate file type ────────────────────────────────────────────────────
+    file_ext = Path(file.filename or "").suffix.lower()
     if not file.filename or file_ext not in _ALLOWED_EXTS:
-        record_event(
-            request,
-            "ingest",
-            "Upload rejected because the file type is not supported",
-            status="error",
-            metadata={"filename": file.filename},
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, JPG, and PNG files are accepted",
         )
-        raise HTTPException(status_code=400, detail="Only PDF, JPG, and PNG files are accepted")
 
     file_bytes = await file.read()
     file_hash = hashlib.sha256(file_bytes).hexdigest()
+    filename = file.filename
+    email = _tenant_email(request)
 
-    embedder = get_embedder()
+    # ── Supabase path ─────────────────────────────────────────────────────────
+    if db.db_available():
+        pool = db.get_pool()
+        tenant_id = await db.get_or_create_tenant(pool, email)
 
-    # ── Hash de-dupe: skip re-embedding if file content hasn't changed ──────────
-    stored_hash = embedder.source_hash(file.filename)
-    if stored_hash == file_hash:
-        chunk_count = len(embedder.get_by_source(file.filename))
+        # ── Hash de-dupe ──────────────────────────────────────────────────────
+        existing = await db.get_document_by_hash(pool, tenant_id, file_hash)
+        if existing:
+            preview_url = ""
+            if store.storage_configured():
+                try:
+                    preview_url = await store.get_signed_url(existing["storage_path"])
+                except Exception:
+                    pass
+            record_event(
+                request, "ingest",
+                f"Skipped re-embedding {filename} (hash unchanged)",
+                status="ok",
+                metadata={
+                    "source_file": filename,
+                    "document_id": str(existing["id"]),
+                    "chunk_count": existing["chunk_count"],
+                    "cache_hit": True,
+                    "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                },
+            )
+            return {
+                "source_file": filename,
+                "document_id": str(existing["id"]),
+                "chunk_count": existing["chunk_count"],
+                "preview_url": preview_url,
+                "status": "ok",
+                "cached": True,
+            }
+
+        # ── Upload to Supabase Storage ─────────────────────────────────────────
+        document_id = str(uuid.uuid4())
+        storage_path = ""
+        preview_url = ""
+
+        if store.storage_configured():
+            try:
+                storage_path = await store.upload_file(
+                    tenant_id, document_id, filename, file_bytes
+                )
+                preview_url = await store.get_signed_url(storage_path)
+            except Exception as exc:
+                record_exception(request, "ingest", "Storage upload failed", exc,
+                                 metadata={"source_file": filename})
+                # Non-fatal: continue without Storage URL
+
+        # ── Write temp file for parsing ───────────────────────────────────────
+        tmp_dir = Path(settings.upload_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        dest = tmp_dir / filename
+        dest.write_bytes(file_bytes)
+
+        # ── Parse chunks (run blocking I/O in thread) ─────────────────────────
+        try:
+            chunks = await anyio.to_thread.run_sync(
+                lambda: extract_chunks(str(dest), filename)
+            )
+        except Exception as exc:
+            record_exception(request, "ingest", "File parsing failed", exc,
+                             metadata={"source_file": filename})
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        if not chunks:
+            raise HTTPException(
+                status_code=422,
+                detail="No text could be extracted from the file",
+            )
+
+        # ── Embed ─────────────────────────────────────────────────────────────
+        try:
+            texts = [c["text"] for c in chunks]
+            embeddings = await emb_svc.embed(texts, task_type="RETRIEVAL_DOCUMENT")
+        except Exception as exc:
+            record_exception(request, "ingest", "Embedding failed", exc,
+                             metadata={"source_file": filename, "chunk_count": len(chunks)})
+            raise
+
+        # ── Persist to Postgres ───────────────────────────────────────────────
+        try:
+            doc_id = await db.create_document(
+                pool, tenant_id, filename, file_hash,
+                storage_path, file_ext.lstrip("."), len(chunks),
+            )
+            await db.insert_chunks(pool, doc_id, tenant_id, chunks, embeddings)
+        except Exception as exc:
+            record_exception(request, "ingest", "DB write failed", exc,
+                             metadata={"source_file": filename})
+            raise
+
+        latency_ms = round((time.monotonic() - t0) * 1000, 1)
         record_event(
-            request,
-            "ingest",
-            f"Skipped re-embedding {file.filename} (hash unchanged)",
+            request, "ingest", f"Indexed {filename}",
             status="ok",
             metadata={
-                "source_file": file.filename,
-                "chunk_count": chunk_count,
-                "cache_hit": True,
-                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                "source_file": filename,
+                "document_id": doc_id,
+                "chunk_count": len(chunks),
+                "cache_hit": False,
+                "latency_ms": latency_ms,
             },
         )
-        return {"source_file": file.filename, "chunk_count": chunk_count, "status": "ok", "cached": True}
+        return {
+            "source_file": filename,
+            "document_id": doc_id,
+            "chunk_count": len(chunks),
+            "preview_url": preview_url,
+            "status": "ok",
+            "cached": False,
+        }
 
-    # ── Save file ────────────────────────────────────────────────────────────────
-    upload_dir = Path(settings.upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = upload_dir / file.filename
+    # ── Local fallback (no Supabase creds) ────────────────────────────────────
+    tmp_dir = Path(settings.upload_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    dest = tmp_dir / filename
+    dest.write_bytes(file_bytes)
 
     try:
-        with dest.open("wb") as f:
-            f.write(file_bytes)
-    except Exception as exc:
-        record_exception(
-            request,
-            "ingest",
-            "Upload failed while saving the file",
-            exc,
-            metadata={
-                "source_file": file.filename,
-                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-            },
+        chunks = await anyio.to_thread.run_sync(
+            lambda: extract_chunks(str(dest), filename)
         )
-        raise
-
-    # ── Extract chunks ───────────────────────────────────────────────────────────
-    try:
-        chunks = extract_chunks(str(dest), file.filename)
     except Exception as exc:
-        record_exception(
-            request,
-            "ingest",
-            "File parsing failed during upload",
-            exc,
-            metadata={
-                "source_file": file.filename,
-                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-            },
-        )
-        raise
+        raise HTTPException(status_code=422, detail=str(exc))
 
     if not chunks:
-        record_event(
-            request,
-            "ingest",
-            "Upload rejected because no text could be extracted",
-            status="error",
-            metadata={"source_file": file.filename},
-        )
-        raise HTTPException(status_code=422, detail="No text could be extracted from the file")
+        raise HTTPException(status_code=422, detail="No text could be extracted")
 
-    # Stamp the file hash onto every chunk so we can check it later.
-    for chunk in chunks:
-        chunk["file_hash"] = file_hash
+    record_event(request, "ingest", f"Indexed {filename} (local mode)",
+                 status="ok",
+                 metadata={"source_file": filename, "chunk_count": len(chunks)})
 
-    # ── Embed ────────────────────────────────────────────────────────────────────
-    try:
-        embedder.delete_by_source(file.filename)
-        embedder.embed_chunks(chunks)
-    except Exception as exc:
-        record_exception(
-            request,
-            "ingest",
-            "Vector indexing failed during upload",
-            exc,
-            metadata={
-                "source_file": file.filename,
-                "chunk_count": len(chunks),
-                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-            },
-        )
-        raise
-
-    record_event(
-        request,
-        "ingest",
-        f"Indexed {file.filename}",
-        status="ok",
-        metadata={
-            "source_file": file.filename,
-            "chunk_count": len(chunks),
-            "cache_hit": False,
-            "latency_ms": round((time.monotonic() - t0) * 1000, 1),
-        },
-    )
-
-    return {"source_file": file.filename, "chunk_count": len(chunks), "status": "ok", "cached": False}
+    return {
+        "source_file": filename,
+        "document_id": None,
+        "chunk_count": len(chunks),
+        "preview_url": f"{request.base_url}uploads/{filename}",
+        "status": "ok",
+        "cached": False,
+    }
 
 
 @router.get("/sources")
 async def list_sources():
-    return {"sources": get_embedder().list_sources()}
+    if db.db_available():
+        pool = db.get_pool()
+        rows = await pool.fetch("SELECT DISTINCT filename FROM documents ORDER BY filename")
+        return {"sources": [r["filename"] for r in rows]}
+    return {"sources": []}
 
 
 @router.get("/chunks")
-async def get_document_chunks(source_file: str):
-    chunks = get_embedder().get_by_source(source_file)
+async def get_document_chunks(source_file: str, request: Request):
+    if not db.db_available():
+        return {"source_file": source_file, "chunks": []}
+
+    pool = db.get_pool()
+    email = _tenant_email(request)
+    tenant_id = await db.get_or_create_tenant(pool, email)
+
+    doc = await db.get_document_by_filename(pool, tenant_id, source_file)
+    if not doc:
+        return {"source_file": source_file, "chunks": []}
+
+    rows = await db.get_chunks_for_document(pool, str(doc["id"]), tenant_id)
     return {
         "source_file": source_file,
         "chunks": [
             {
-                "text": c["text"],
-                "chunk_type": c["metadata"].get("chunk_type", "header"),
-                "page_num": int(c["metadata"].get("page_num", 0)),
-                "chunk_index": int(c["metadata"].get("chunk_index", 0)),
+                "text": r["text"],
+                "chunk_type": r["chunk_type"],
+                "page_num": r["page_num"],
+                "chunk_index": r["chunk_index"],
             }
-            for c in sorted(chunks, key=lambda x: int(x["metadata"].get("chunk_index", 0)))
+            for r in rows
         ],
     }

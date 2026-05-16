@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { API_BASE, ingestFile } from "@/lib/api";
+import { ingestFile } from "@/lib/api";
 
 const IMAGE_RE = /\.(jpe?g|png)(\?|$)/i;
 const PDFJS_CDN =
@@ -78,8 +78,8 @@ export default function InvoiceDataPanel({ sourceFile, pdfUrl, onUpload }: Props
     setUploading(true);
     try {
       const result = await ingestFile(file);
-      const url = `${API_BASE}/uploads/${encodeURIComponent(result.source_file)}`;
-      onUpload(url, result.source_file);
+      // preview_url is a signed Supabase Storage URL (or local fallback from the backend)
+      onUpload(result.preview_url, result.source_file);
       setPreviewOpen(true);
     } catch (e: any) {
       setError(e.message || "Upload failed");

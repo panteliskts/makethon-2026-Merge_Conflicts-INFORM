@@ -127,8 +127,11 @@ export interface ChunkResult {
 
 export interface IngestResponse {
   source_file: string;
+  document_id: string | null;
   chunk_count: number;
+  preview_url: string;   // signed Supabase Storage URL (or local fallback)
   status: string;
+  cached: boolean;
 }
 
 export interface ChatMessage {
