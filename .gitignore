@@ -1,0 +1,27 @@
+# Local environment files. Keep the checked-in .env.example files for setup.
+.env
+*.env.local
+backend/.env
+frontend/.env.local
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Frontend dependencies and build output
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+
+# App-generated local data
+backend/chroma_db/
+backend/uploads/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
