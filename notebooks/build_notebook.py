@@ -71,12 +71,19 @@ def find_dir(*keywords):
             return root
     return None
 
+print("Attached input folders:")
+for root in sorted(glob.glob("/kaggle/input/*")):
+    print("  ", root)
+
 SROIE_DIR   = find_dir("sroie")
-INVOICE_DIR = find_dir("invoice", "ocr")
+INVOICE_DIR = find_dir("invoice", "ocr") or find_dir("invoice")
 HQ_DIR      = find_dir("high", "quality")
-print("SROIE:  ", SROIE_DIR)
+print("\nSROIE:      ", SROIE_DIR)
 print("invoice-ocr:", INVOICE_DIR)
 print("HQ invoice: ", HQ_DIR)
+if SROIE_DIR is None:
+    print("\nWARNING: SROIE not found. Attach 'urbikn/sroie-datasetv2' via "
+          "Add Input. Training falls back to CORD only.")
 
 WORK = "/kaggle/working"
 os.makedirs(WORK, exist_ok=True)
@@ -157,6 +164,8 @@ md("## 3 · Dataset parsers → unified schema")
 code(r"""
 def parse_sroie(split):
     # split in {"train","test"}; returns list of unified docs
+    if SROIE_DIR is None:
+        return []
     base = None
     for cand in [os.path.join(SROIE_DIR, "SROIE2019", split),
                  os.path.join(SROIE_DIR, split)]:
