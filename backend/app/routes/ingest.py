@@ -57,6 +57,14 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         )
 
     file_bytes = await file.read()
+
+    max_bytes = settings.max_file_size_mb * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {settings.max_file_size_mb} MB size limit",
+        )
+
     file_hash = hashlib.sha256(file_bytes).hexdigest()
     filename = file.filename
     email = _tenant_email(request)

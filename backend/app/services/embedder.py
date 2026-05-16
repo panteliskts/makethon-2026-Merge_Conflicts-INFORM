@@ -15,7 +15,7 @@ Key design decisions
 • 429 backoff on the Gemini embed API (1→2→4→8 s, max 4 attempts).
 """
 
-import time
+import asyncio
 import httpx
 from ..config import settings
 
@@ -55,7 +55,7 @@ async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list
             if resp.status_code == 429:
                 if attempt == 3:
                     resp.raise_for_status()
-                time.sleep(delay)
+                await asyncio.sleep(delay)
                 delay *= 2
                 continue
             resp.raise_for_status()
@@ -77,11 +77,19 @@ async def hybrid_search(
     tenant_id: str,
     document_id: str | None,
     top_k: int,
+    retrieve_k: int | None = None,
 ) -> list[dict]:
     """
     Combine vector similarity and Postgres full-text ranking via RRF.
-    Returns up to *top_k* chunks ordered by fused score.
+
+    retrieve_k controls how many candidates are fetched from each index before
+    fusion (defaults to settings.top_k_retrieve). The fused result is then
+    trimmed to top_k. When a reranker is enabled the caller uses retrieve_k >
+    top_k to get a larger pool, reranks, then slices to top_k.
     """
+    from ..config import settings as _settings
+    candidate_k = retrieve_k if retrieve_k is not None else _settings.top_k_retrieve
+
     query_vec = (await embed([query], task_type="RETRIEVAL_QUERY"))[0]
     vec_literal = _vec_literal(query_vec)
 
@@ -97,7 +105,7 @@ async def hybrid_search(
         WHERE tenant_id = $2::uuid
           AND ($3::uuid IS NULL OR document_id = $3::uuid)
         ORDER BY embedding <=> $1::vector
-        LIMIT 20
+        LIMIT $7
     ),
     text_hits AS (
         SELECT
@@ -109,7 +117,7 @@ async def hybrid_search(
         WHERE tenant_id = $2::uuid
           AND ($3::uuid IS NULL OR document_id = $3::uuid)
           AND search_vector @@ plainto_tsquery('english', $4)
-        LIMIT 20
+        LIMIT $7
     ),
     rrf AS (
         SELECT
@@ -145,10 +153,12 @@ async def hybrid_search(
         query,
         float(_RRF_K),
         top_k,
+        candidate_k,
     )
 
     return [
         {
+            "id":          row["id"],
             "text":        row["text"],
             "chunk_type":  row["chunk_type"],
             "chunk_index": row["chunk_index"],
@@ -159,7 +169,7 @@ async def hybrid_search(
             "document_id": row["document_id"],
             "score":       float(row["score"]),
             "vector_score": float(row["vector_score"]),
-            # Legacy key — LLM service reads this for grounding check
+            # Legacy key — kept for any callers that still read distance
             "distance":    1.0 - float(row["vector_score"]),
             "metadata": {
                 "chunk_type":  row["chunk_type"],

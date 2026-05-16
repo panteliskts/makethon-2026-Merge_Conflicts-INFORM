@@ -9,8 +9,17 @@ class Settings(BaseSettings):
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     gemini_embed_model: str = "gemini-embedding-001"
     gemini_chat_model: str = "gemini-2.5-flash-lite"
-    max_tokens: int = 256
+
+    # Retrieval & generation
+    max_tokens: int = 512
     top_k: int = 3
+    top_k_retrieve: int = 20          # pre-rerank candidate pool size
+    score_threshold: float = 0.35     # min vector_score to consider an answer grounded
+    reranker_enabled: bool = False    # LLM reranker costs one extra API call per query
+
+    # Safety & limits
+    max_file_size_mb: int = 20
+    max_history_tokens: int = 800     # token budget for conversation history window
 
     # Supabase – add these three to backend/.env
     # SUPABASE_URL=https://<ref>.supabase.co

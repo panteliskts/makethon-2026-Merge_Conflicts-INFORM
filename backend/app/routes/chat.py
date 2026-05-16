@@ -1,6 +1,6 @@
 import time
 from fastapi import APIRouter, Request
-from ..models import ChatRequest, ChatResponse, ChunkResult, BoundingBox
+from ..models import ChatRequest, ChatResponse, ChunkResult, BoundingBox, Citation
 from ..services import embedder as emb_svc
 from ..services.llm import LLMService
 from ..services.telemetry import record_event, record_exception
@@ -40,13 +40,31 @@ def _build_chunk_result(item: dict) -> ChunkResult:
     )
 
 
+def _resolve_failure_mode(
+    chunks: list[dict],
+    refused: bool,
+    grounded: bool,
+) -> str | None:
+    if not chunks or float(chunks[0].get("vector_score", 0)) < settings.score_threshold:
+        return "retrieval"
+    if refused or not grounded:
+        return "grounding"
+    return None
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest, request: Request):
     t0 = time.monotonic()
 
     user_messages = [m for m in req.messages if m.role == "user"]
     if not user_messages:
-        return ChatResponse(message="No question provided.", chunks=[], grounded=False, refused=True)
+        return ChatResponse(
+            message="No question provided.",
+            chunks=[],
+            grounded=False,
+            refused=True,
+            failure_mode="retrieval",
+        )
 
     email = _tenant_email(request)
 
@@ -68,9 +86,13 @@ async def chat_endpoint(req: ChatRequest, request: Request):
 
     try:
         if db.db_available():
+            retrieve_k = settings.top_k_retrieve if settings.reranker_enabled else top_k
             chunks = await emb_svc.hybrid_search(
-                pool, last_query, tenant_id, document_id, top_k
+                pool, last_query, tenant_id, document_id, top_k,
+                retrieve_k=retrieve_k,
             )
+            if settings.reranker_enabled and len(chunks) > top_k:
+                chunks = _get_llm().rerank(last_query, chunks, top_k)
         else:
             chunks = []
 
@@ -90,7 +112,15 @@ async def chat_endpoint(req: ChatRequest, request: Request):
 
     answer = result["answer"]
     refused = result["refused"]
-    grounded = not refused and bool(chunks)
+    citations = result.get("citations", [])
+
+    top_score = float(chunks[0].get("vector_score", 0)) if chunks else 0.0
+    grounded = (
+        not refused
+        and bool(chunks)
+        and top_score >= settings.score_threshold
+    )
+    failure_mode = _resolve_failure_mode(chunks, refused, grounded)
     latency_ms = (time.monotonic() - t0) * 1000
 
     # ── Persist messages to DB ────────────────────────────────────────────────
@@ -117,6 +147,8 @@ async def chat_endpoint(req: ChatRequest, request: Request):
             "source_file": req.source_file,
             "grounded": grounded,
             "refused": refused,
+            "failure_mode": failure_mode,
+            "citation_count": len(citations),
             "cached": result.get("cached", False),
             "latency_ms": round(latency_ms, 1),
         },
@@ -127,4 +159,6 @@ async def chat_endpoint(req: ChatRequest, request: Request):
         chunks=[_build_chunk_result(c) for c in chunks],
         grounded=grounded,
         refused=refused,
+        failure_mode=failure_mode,
+        citations=[Citation(**c) for c in citations],
     )
