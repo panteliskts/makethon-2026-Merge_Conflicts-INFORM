@@ -5,6 +5,17 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_PID=""
 FRONTEND_PID=""
 
+find_python() {
+  if command -v "${PYTHON_BIN:-python3}" >/dev/null 2>&1; then
+    command -v "${PYTHON_BIN:-python3}"
+  elif command -v python >/dev/null 2>&1; then
+    command -v python
+  else
+    echo "ERROR: Python is required but was not found. Install Python 3.11+ and re-run this script." >&2
+    exit 1
+  fi
+}
+
 port_in_use() {
   local host="$1"
   local port="$2"
@@ -83,6 +94,7 @@ REQUESTED_BACKEND_PORT="${BACKEND_PORT:-8000}"
 REQUESTED_FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
+PYTHON_BIN="$(find_python)"
 
 BACKEND_PORT="$(find_free_port "$BACKEND_HOST" "$REQUESTED_BACKEND_PORT")"
 FRONTEND_PORT="$(find_free_port "$FRONTEND_HOST" "$REQUESTED_FRONTEND_PORT")"
@@ -103,11 +115,25 @@ FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT}"
 echo "==> Starting backend..."
 cd "$ROOT/backend"
 if [ ! -d "venv" ]; then
-  echo "    Creating virtualenv..."
-  python3 -m venv venv
+  echo "    Creating virtualenv with $PYTHON_BIN..."
+  "$PYTHON_BIN" -m venv venv
 fi
-source venv/bin/activate
-pip install -q -r requirements.txt
+
+if [ -f "venv/bin/activate" ]; then
+  # macOS/Linux
+  source venv/bin/activate
+elif [ -f "venv/Scripts/activate" ]; then
+  # Windows Git Bash
+  source venv/Scripts/activate
+else
+  echo "ERROR: Could not find the virtualenv activation script in backend/venv." >&2
+  echo "Remove backend/venv and re-run ./start.sh." >&2
+  exit 1
+fi
+
+echo "    Using $(python --version 2>&1)"
+echo "    Installing Python packages; first run can take a few minutes..."
+python -m pip install -r requirements.txt
 CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT" &
 BACKEND_PID=$!
 
@@ -115,7 +141,7 @@ BACKEND_PID=$!
 echo "==> Starting frontend..."
 cd "$ROOT/frontend"
 if [ ! -d "node_modules" ]; then
-  echo "    Installing npm packages..."
+  echo "    Installing npm packages; first run can take a few minutes..."
   npm install
 fi
 
