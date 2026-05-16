@@ -4,19 +4,41 @@ AI-powered invoice analysis with RAG, bounding box highlighting, bank reconcilia
 
 ## Quick Start
 
-### Backend
+### One-command local start
+
+```bash
+./start.sh
+```
+
+On first run, the script creates `backend/.env` from `backend/.env.example`.
+Ask the team lead for the private values and paste them into `backend/.env`.
+Do not commit real env files.
+
+Required for full shared-team mode:
+
+```env
+GEMINI_API_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+SUPABASE_DB_URL=
+```
+
+`frontend/.env.local` is also local-only; the script creates demo auth defaults
+when it is missing.
+
+### Manual backend
 
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY=sk-...
+# Edit .env and set GEMINI_API_KEY plus the private Supabase values.
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 # API runs at http://localhost:8000
 ```
 
-### Frontend
+### Manual frontend
 
 ```bash
 cd frontend
@@ -28,7 +50,7 @@ npm run dev
 ## Architecture
 
 - **FastAPI** backend with `/api/ingest`, `/api/chat`, `/api/query`, `/api/reconcile`, `/api/metrics`, `/api/admin/sessions`, `/api/admin/command`
-- **ChromaDB** for vector storage with semantic chunking metadata
+- **Supabase Postgres + Storage** for vector search, persistence, and invoice previews
 - **PyMuPDF** for PDF parsing — chunks by invoice section (header, line_item, totals, payment_terms)
 - **Gemini OpenAI-compatible API** for embeddings, RAG answers, and self-checks
 - **Next.js 14** frontend with PDF.js bounding box overlay

@@ -82,14 +82,24 @@ trap cleanup INT TERM EXIT
 
 if [ ! -f "$ROOT/backend/.env" ]; then
   cp "$ROOT/backend/.env.example" "$ROOT/backend/.env"
-  echo "Created backend/.env - set your GEMINI_API_KEY before continuing."
+  echo "Created backend/.env from backend/.env.example."
+  echo "Set GEMINI_API_KEY before continuing."
+  echo "For shared team persistence, also set SUPABASE_URL, SUPABASE_SERVICE_KEY, and SUPABASE_DB_URL."
+  echo "Ask the team lead for the private values; do not commit backend/.env."
   echo "Edit $ROOT/backend/.env then re-run this script."
   exit 1
 fi
 
-if grep -q "AIza\.\.\." "$ROOT/backend/.env"; then
-  echo "ERROR: backend/.env still has the placeholder key. Set GEMINI_API_KEY first."
+if grep -Eq "^GEMINI_API_KEY=($|AIza\\.\\.\\.|your-)" "$ROOT/backend/.env"; then
+  echo "ERROR: backend/.env is missing GEMINI_API_KEY."
+  echo "Ask the team lead for the private backend/.env values, then re-run this script."
   exit 1
+fi
+
+if grep -Eq "^SUPABASE_(URL|SERVICE_KEY|DB_URL)=$" "$ROOT/backend/.env"; then
+  echo "WARNING: one or more Supabase values are blank in backend/.env."
+  echo "         The backend can start in local-only mode, but shared team persistence/storage needs:"
+  echo "         SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_DB_URL"
 fi
 
 if [ ! -f "$ROOT/frontend/.env.local" ]; then
