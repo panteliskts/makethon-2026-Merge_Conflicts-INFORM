@@ -4,34 +4,65 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
 
-const SCROLL_PAGES = 8;
+const SCROLL_PAGES = 14;
 const FRAME_COUNT = 151;
 const CARD_HALF_H = 70;
 
 const BLOCKS = [
   {
-    headline: "Snap the receipt.",
-    subtext: "A single photo is all it takes — no typing, no sorting.",
+    headline: "Ask in plain language.",
+    subtext:
+      "Type any question about your invoice — vendor, total, payment terms, line items. Get a precise answer in seconds.",
     side: "left" as const,
-    at: 0.15,
+    at: 0.08,
   },
   {
-    headline: "We read every line.",
-    subtext: "Merchant, date, tax and totals — extracted in seconds.",
+    headline: "Grounded in evidence.",
+    subtext:
+      "Every answer is tied to the exact chunk and page region it came from. Not a guess — a reference you can inspect.",
     side: "right" as const,
-    at: 0.38,
+    at: 0.20,
   },
   {
-    headline: "Expenses, organised.",
-    subtext: "Every purchase lands in the right category automatically.",
+    headline: "Click to see the proof.",
+    subtext:
+      "Source chips illuminate the exact PDF region behind each answer. Finance review that is fully auditable.",
     side: "left" as const,
-    at: 0.62,
+    at: 0.32,
   },
   {
-    headline: "Ready when you are.",
-    subtext: "Export a clean report whenever tax season calls.",
+    headline: "We don't ask you to trust the model.",
+    subtext: "We show you the proof on the page.",
     side: "right" as const,
-    at: 0.85,
+    at: 0.44,
+  },
+  {
+    headline: "Reconcile payments instantly.",
+    subtext:
+      "Upload a bank CSV and match invoice totals to transactions. PAID, PARTIAL, or UNPAID — in seconds.",
+    side: "left" as const,
+    at: 0.56,
+  },
+  {
+    headline: "Built for finance teams.",
+    subtext:
+      "For small businesses, accounting firms, and ops teams that need fast invoice review without a heavy AP implementation.",
+    side: "right" as const,
+    at: 0.68,
+  },
+  {
+    headline: "Support when it matters.",
+    subtext:
+      "Admins get live session visibility, error traces, and safe diagnostics. No guessing from screenshots.",
+    side: "left" as const,
+    at: 0.80,
+  },
+  {
+    headline: "Verified. Reconciled. Supportable.",
+    subtext:
+      "INFORM doesn't stop at extraction. It makes invoice AI a workflow you can rely on and audit.",
+    side: "right" as const,
+    at: 0.90,
   },
 ];
 
@@ -236,19 +267,28 @@ export default function LandingPage() {
 
           {/* Hero — first viewport, text at bottom */}
           <div className="flex h-[100vh] flex-col justify-end px-6 pb-[72px]">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em]"
+              style={{ color: "var(--color-accent)" }}>
+              Powered by Gemini 2.0 Flash
+            </p>
             <h1
               className="mb-3 font-bold tracking-tight text-white"
               style={{
-                fontSize: "clamp(2rem,5vw,3rem)",
+                fontSize: "clamp(2rem,5vw,3.25rem)",
                 fontWeight: 900,
                 textShadow: "0 2px 8px rgba(0,0,0,0.85)",
-                letterSpacing: "-0.025em",
+                letterSpacing: "-0.03em",
               }}
             >
-              Receipts, in motion.
+              Invoice Intelligence,{" "}
+              <span style={{ color: "var(--color-accent)" }}>Done Right.</span>
             </h1>
-            <p className="text-sm" style={{ color: "#bdbdc6", textShadow: "0 1px 6px rgba(0,0,0,0.85)" }}>
-              Scroll to follow the receipt ↓
+            <p className="max-w-[46ch] text-sm leading-relaxed"
+              style={{ color: "#bdbdc6", textShadow: "0 1px 6px rgba(0,0,0,0.85)", marginBottom: 24 }}>
+              Ask plain-language questions about any invoice. Get grounded answers with the exact source region highlighted on the document.
+            </p>
+            <p className="text-xs" style={{ color: "rgba(189,189,198,0.6)", textShadow: "0 1px 6px rgba(0,0,0,0.85)" }}>
+              Scroll to explore ↓
             </p>
           </div>
 
@@ -300,7 +340,7 @@ export default function LandingPage() {
             className="absolute inset-x-0 bottom-0 flex h-[100vh] flex-col items-center justify-center gap-5"
           >
             <p className="text-sm" style={{ color: "#bdbdc6", textShadow: "0 1px 6px rgba(0,0,0,0.85)" }}>
-              Invoice intelligence, done right.
+              Evidence-first invoice AI for question answering,<br />source verification, reconciliation, and support.
             </p>
             <Link
               href="/login"
