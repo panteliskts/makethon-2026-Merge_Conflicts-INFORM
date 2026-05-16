@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_db"
     upload_dir: str = "./uploads"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    admin_api_token: str = ""
 
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     gemini_embed_model: str = "text-embedding-004"

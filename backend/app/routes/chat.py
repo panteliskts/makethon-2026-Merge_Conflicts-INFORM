@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+import time
+
+from fastapi import APIRouter, Request
 from ..models import ChatRequest, ChatResponse, ChunkResult, BoundingBox
 from ..services.embedder import ChromaEmbedder
 from ..services.llm import LLMService
+from ..services.telemetry import record_event, record_exception
 
 router = APIRouter()
 
@@ -42,21 +45,58 @@ def _build_chunk_result(item: dict) -> ChunkResult:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest):
+async def chat_endpoint(req: ChatRequest, request: Request):
+    t0 = time.monotonic()
     user_messages = [m for m in req.messages if m.role == "user"]
     if not user_messages:
+        record_event(
+            request,
+            "chat",
+            "Chat rejected because no user question was provided",
+            status="error",
+            metadata={"source_file": req.source_file},
+        )
         return ChatResponse(message="No question provided.", chunks=[], grounded=False, refused=True)
 
     last_query = user_messages[-1].content
     where = {"source_file": req.source_file} if req.source_file else None
-    chunks = _get_embedder().query(last_query, n_results=5, where=where)
 
-    messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
-    result = _get_llm().generate_chat_answer(messages_dicts, chunks)
+    try:
+        chunks = _get_embedder().query(last_query, n_results=5, where=where)
+        messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
+        result = _get_llm().generate_chat_answer(messages_dicts, chunks)
+    except Exception as exc:
+        record_exception(
+            request,
+            "chat",
+            "Chat request failed before an assistant response could be generated",
+            exc,
+            metadata={
+                "source_file": req.source_file,
+                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                "messages": len(req.messages),
+            },
+        )
+        raise
 
     answer = result["answer"]
     refused = result["refused"]
     grounded = not refused
+
+    latency_ms = (time.monotonic() - t0) * 1000
+    record_event(
+        request,
+        "chat",
+        f"Assistant response generated with {len(chunks)} supporting chunks",
+        status="ok" if grounded else "warning",
+        metadata={
+            "source_file": req.source_file,
+            "grounded": grounded,
+            "refused": refused,
+            "latency_ms": round(latency_ms, 1),
+            "messages": len(req.messages),
+        },
+    )
 
     return ChatResponse(
         message=answer,

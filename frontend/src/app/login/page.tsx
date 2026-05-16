@@ -1,6 +1,6 @@
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
+import { getSession, signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -12,8 +12,12 @@ type Mode = "options" | "credentials";
 
 const ease = [0.16, 1, 0.3, 1] as const;
 
+function routeForRole(role?: string | null) {
+  return role === "admin" ? "/admin" : "/dashboard";
+}
+
 export default function LoginPage() {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const { t } = useLocale();
   const L = t.login;
@@ -24,8 +28,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (status === "authenticated") router.push("/dashboard");
-  }, [status, router]);
+    if (status === "authenticated") router.push(routeForRole(session?.user?.role));
+  }, [status, router, session?.user?.role]);
 
   async function handleGoogleSignIn() {
     setError("");
@@ -46,7 +50,8 @@ export default function LoginPage() {
     if (res?.error) {
       setError(L.errorMsg);
     } else {
-      router.push("/dashboard");
+      const nextSession = await getSession();
+      router.push(routeForRole(nextSession?.user?.role));
     }
   }
 
@@ -260,6 +265,8 @@ export default function LoginPage() {
               <div className="mt-6 pt-6 border-t border-card-border">
                 <p className="text-xs text-center text-text-secondary leading-relaxed">
                   {L.demoLabel} <span className="text-text-primary font-mono">demo@inform.app</span> / <span className="text-text-primary font-mono">inform2026</span>
+                  <br />
+                  Admin: <span className="text-text-primary font-mono">admin@inform.app</span> / <span className="text-text-primary font-mono">inform2026</span>
                 </p>
               </div>
             </div>

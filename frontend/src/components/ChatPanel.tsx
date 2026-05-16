@@ -37,8 +37,9 @@ export default function ChatPanel({
   }, [messages, loading]);
 
   async function handleUpload(file: File) {
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setError("Please upload a PDF file.");
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!["pdf", "jpg", "jpeg", "png"].includes(ext)) {
+      setError("Please upload a PDF, JPG, or PNG file.");
       return;
     }
     setError(null);
@@ -132,7 +133,7 @@ export default function ChatPanel({
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
           )}
-          {uploading ? "Processing..." : "Upload Invoice"}
+          {uploading ? "Processing..." : "Upload Invoice (PDF / JPG / PNG)"}
         </button>
 
         {sourceFile && (
@@ -144,7 +145,7 @@ export default function ChatPanel({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf"
+          accept=".pdf,.jpg,.jpeg,.png"
           className="hidden"
           onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
         />

@@ -1,11 +1,12 @@
 import io
 import re
-from datetime import datetime, timedelta
-from fastapi import APIRouter, UploadFile, File, Form
+import time
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from typing import Optional
 import pandas as pd
 from ..models import ReconcileResult
 from ..services.embedder import ChromaEmbedder
+from ..services.telemetry import record_event, record_exception
 
 router = APIRouter()
 
@@ -55,17 +56,38 @@ def _extract_invoice_info(chunks: list[dict]) -> list[dict]:
 
 @router.post("/reconcile")
 async def reconcile(
+    request: Request,
     bank_statement: UploadFile = File(...),
     invoice: Optional[UploadFile] = File(None),
     source_file: Optional[str] = Form(None),
 ):
+    t0 = time.monotonic()
     csv_bytes = await bank_statement.read()
     try:
         df = pd.read_csv(io.BytesIO(csv_bytes))
     except Exception:
-        df = pd.read_csv(io.BytesIO(csv_bytes), sep=";")
+        try:
+            df = pd.read_csv(io.BytesIO(csv_bytes), sep=";")
+        except Exception:
+            record_event(
+                request,
+                "reconcile",
+                "Bank statement CSV could not be parsed",
+                status="error",
+                metadata={"source_file": source_file},
+            )
+            raise HTTPException(status_code=400, detail="Bank statement CSV could not be parsed")
 
     df.columns = [c.lower().strip() for c in df.columns]
+    if len(df.columns) == 0:
+        record_event(
+            request,
+            "reconcile",
+            "Bank statement CSV had no readable columns",
+            status="error",
+            metadata={"source_file": source_file},
+        )
+        raise HTTPException(status_code=400, detail="Bank statement CSV had no readable columns")
 
     col_map = {}
     for col in df.columns:
@@ -91,10 +113,31 @@ async def reconcile(
             continue
 
     where = {"source_file": source_file} if source_file else None
-    raw_chunks = _get_embedder().query("total amount invoice", n_results=20, where=where)
-    invoice_items = _extract_invoice_info(raw_chunks)
+    try:
+        raw_chunks = _get_embedder().query("total amount invoice", n_results=20, where=where)
+        invoice_items = _extract_invoice_info(raw_chunks)
+    except Exception as exc:
+        record_exception(
+            request,
+            "reconcile",
+            "Reconciliation failed while retrieving invoice totals",
+            exc,
+            metadata={
+                "source_file": source_file,
+                "bank_rows": len(bank_rows),
+                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+            },
+        )
+        raise
 
     if not invoice_items:
+        record_event(
+            request,
+            "reconcile",
+            "No invoice totals were available for reconciliation",
+            status="warning",
+            metadata={"source_file": source_file, "bank_rows": len(bank_rows)},
+        )
         return []
 
     results = []
@@ -122,5 +165,18 @@ async def reconcile(
             status=status,
             bank_amount=matched_bank,
         ))
+
+    record_event(
+        request,
+        "reconcile",
+        f"Reconciled {len(results)} invoice candidates",
+        status="ok" if bank_rows else "warning",
+        metadata={
+            "source_file": source_file,
+            "bank_rows": len(bank_rows),
+            "result_count": len(results),
+            "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+        },
+    )
 
     return results

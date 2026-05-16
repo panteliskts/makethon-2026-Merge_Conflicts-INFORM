@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import BaseModel
+from typing import Any, Optional
+from pydantic import BaseModel, Field
 
 
 class BoundingBox(BaseModel):
@@ -62,3 +62,47 @@ class MetricsResponse(BaseModel):
     grounded_count: int
     refused_count: int
     avg_latency_ms: float
+
+
+class AdminEvent(BaseModel):
+    id: str
+    timestamp: str
+    type: str
+    status: str
+    message: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminSession(BaseModel):
+    id: str
+    user_email: str
+    user_name: str
+    role: str
+    status: str
+    path: str
+    user_agent: str
+    active_source: Optional[str] = None
+    first_seen: str
+    last_seen: str
+    request_count: int
+    error_count: int
+    events: list[AdminEvent]
+
+
+class AdminSessionsResponse(BaseModel):
+    generated_at: str
+    uptime_seconds: float
+    sessions: list[AdminSession]
+
+
+class AdminCommandRequest(BaseModel):
+    session_id: str
+    command: str
+
+
+class AdminCommandResponse(BaseModel):
+    session_id: str
+    command: str
+    status: str
+    generated_at: str
+    output: list[str]

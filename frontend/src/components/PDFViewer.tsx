@@ -13,7 +13,10 @@ interface Props {
   onPageChange: (page: number) => void;
 }
 
+const IMAGE_RE = /\.(jpe?g|png)(\?|$)/i;
+
 export default function PDFViewer({ pdfUrl, highlightedChunks, currentPage, onPageChange }: Props) {
+  const isImage = !!pdfUrl && IMAGE_RE.test(pdfUrl);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [totalPages, setTotalPages] = useState(0);
@@ -21,7 +24,7 @@ export default function PDFViewer({ pdfUrl, highlightedChunks, currentPage, onPa
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!pdfUrl) return;
+    if (!pdfUrl || IMAGE_RE.test(pdfUrl)) return;
 
     let cancelled = false;
     setLoading(true);
@@ -96,6 +99,24 @@ export default function PDFViewer({ pdfUrl, highlightedChunks, currentPage, onPa
       ctx.font = "bold 10px system-ui, sans-serif";
       ctx.fillText(chunk.bbox.chunk_type, sx + 4, sy - 4);
     }
+  }
+
+  if (isImage) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex shrink-0 items-center justify-between border-b border-card-border bg-sidebar px-4 py-2">
+          <span className="font-mono text-sm text-text-secondary">Image Preview</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center overflow-auto bg-background p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={pdfUrl!}
+            alt="Invoice"
+            className="max-h-full max-w-full rounded-sm object-contain shadow-2xl shadow-black/40"
+          />
+        </div>
+      </div>
+    );
   }
 
   if (!pdfUrl) {

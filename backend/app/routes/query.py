@@ -1,8 +1,9 @@
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from ..models import QueryRequest, QueryResponse, ChunkResult, BoundingBox
 from ..services.embedder import ChromaEmbedder
 from ..services.llm import LLMService
+from ..services.telemetry import record_event, record_exception
 
 router = APIRouter()
 
@@ -54,19 +55,33 @@ def _build_chunk_result(item: dict) -> ChunkResult:
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_endpoint(req: QueryRequest):
+async def query_endpoint(req: QueryRequest, request: Request):
     t0 = time.monotonic()
 
     where = {"source_file": req.source_file} if req.source_file else None
-    chunks = _get_embedder().query(req.query, n_results=req.top_k, where=where)
 
-    result = _get_llm().generate_answer(req.query, chunks)
-    answer = result["answer"]
-    refused = result["refused"]
-    grounded = not refused
+    try:
+        chunks = _get_embedder().query(req.query, n_results=req.top_k, where=where)
+        result = _get_llm().generate_answer(req.query, chunks)
+        answer = result["answer"]
+        refused = result["refused"]
+        grounded = not refused
 
-    if not refused:
-        grounded = _get_llm().self_check(answer, chunks)
+        if not refused:
+            grounded = _get_llm().self_check(answer, chunks)
+    except Exception as exc:
+        record_exception(
+            request,
+            "query",
+            "Query failed before grounding could complete",
+            exc,
+            metadata={
+                "source_file": req.source_file,
+                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
+                "top_k": req.top_k,
+            },
+        )
+        raise
 
     latency_ms = (time.monotonic() - t0) * 1000
     _metrics["total_queries"] += 1
@@ -75,6 +90,20 @@ async def query_endpoint(req: QueryRequest):
         _metrics["grounded_count"] += 1
     if refused:
         _metrics["refused_count"] += 1
+
+    record_event(
+        request,
+        "query",
+        f"Query completed with {len(chunks)} retrieved chunks",
+        status="ok" if grounded else "warning",
+        metadata={
+            "source_file": req.source_file,
+            "grounded": grounded,
+            "refused": refused,
+            "latency_ms": round(latency_ms, 1),
+            "top_k": req.top_k,
+        },
+    )
 
     return QueryResponse(
         answer=answer,

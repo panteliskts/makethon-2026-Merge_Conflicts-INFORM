@@ -4,12 +4,12 @@ This document captures the current state of the INFORM invoice intelligence app 
 
 ## Project Summary
 
-INFORM is a full-stack invoice analysis prototype for Makethon 2026 by team Merge Conflicts. It lets a user upload a PDF invoice, ask grounded questions about it, see source regions highlighted on the rendered PDF, reconcile invoice amounts against a bank statement CSV, and view simple live metrics.
+INFORM is a full-stack invoice analysis prototype for Makethon 2026 by team Merge Conflicts. It lets a client upload a PDF invoice, ask grounded questions about it, see source regions highlighted on the rendered PDF, reconcile invoice amounts against a bank statement CSV, and lets an admin inspect session telemetry for support/debugging.
 
 The app is split into:
 
-- `backend/`: FastAPI API, PDF parsing, chunking, embeddings, vector search, LLM calls, reconciliation, and metrics.
-- `frontend/`: Next.js 14 app with Google sign-in, dashboard tabs, PDF viewer, chat UI, reconciliation UI, and metrics UI.
+- `backend/`: FastAPI API, PDF parsing, chunking, embeddings, vector search, LLM calls, reconciliation, metrics, and admin telemetry.
+- `frontend/`: Next.js 14 app with role-aware sign-in, client dashboard, admin console, PDF viewer, chat UI, and reconciliation UI.
 - `start.sh`: convenience script to start backend and frontend locally.
 
 ## What Is Implemented
@@ -17,8 +17,10 @@ The app is split into:
 ### Authentication and Pages
 
 - Landing page at `/` explains the product and links to sign-in.
-- Login page at `/login` uses NextAuth Google provider.
-- Dashboard at `/dashboard` is protected by `frontend/src/middleware.ts`.
+- Login page at `/login` uses NextAuth Google provider when configured and credentials for the local demo.
+- Dashboard at `/dashboard` is protected by `frontend/src/middleware.ts`; `/client` aliases the same workspace.
+- Admin dashboard at `/admin` is protected by middleware and requires the `admin` role.
+- Demo credentials are `demo@inform.app` / `inform2026` for clients and `admin@inform.app` / `inform2026` for admins.
 - Auth config lives in `frontend/src/lib/auth.ts`.
 - NextAuth API route lives in `frontend/src/app/api/auth/[...nextauth]/route.ts`.
 
@@ -65,9 +67,8 @@ The app is split into:
   - no match: `UNPAID`
 - Date matching is not actually implemented yet, even though the README mentions date tolerance.
 
-### Metrics
+### Metrics And Admin Telemetry
 
-- UI lives in `frontend/src/components/MetricsPanel.tsx`.
 - API endpoint is `GET /api/metrics`.
 - Metrics currently track:
   - total query count
@@ -77,6 +78,10 @@ The app is split into:
 - Metrics are stored in memory in `backend/app/routes/query.py`.
 - Metrics reset when the backend restarts.
 - Only `/api/query` updates metrics; `/api/chat` does not.
+- The client dashboard no longer exposes a Metrics tab; metrics are mainly available to technical operators.
+- Admin telemetry lives in `backend/app/services/telemetry.py` and is exposed through `GET /api/admin/sessions`.
+- The admin console can run allowlisted commands through `POST /api/admin/command`.
+- Ingest, chat, query, and reconcile routes now record success, warning, and failure events where practical.
 
 ## Tech Stack
 
@@ -298,20 +303,21 @@ Returns:
 - `backend/app/services/embedder.py`: ChromaDB and embedding logic.
 - `backend/app/services/llm.py`: Gemini chat prompts, refusal behavior, self-check.
 - `frontend/src/app/page.tsx`: landing page.
-- `frontend/src/app/login/page.tsx`: Google login page.
+- `frontend/src/app/login/page.tsx`: role-aware login page.
 - `frontend/src/app/dashboard/page.tsx`: tabbed dashboard shell.
+- `frontend/src/app/client/page.tsx`: client dashboard alias.
+- `frontend/src/app/admin/page.tsx`: admin diagnostics dashboard.
 - `frontend/src/components/ChatPanel.tsx`: upload and chat UI.
 - `frontend/src/components/PDFViewer.tsx`: PDF render and highlight overlay.
 - `frontend/src/components/ReconcilePanel.tsx`: bank reconciliation UI.
-- `frontend/src/components/MetricsPanel.tsx`: metrics dashboard.
 - `frontend/src/lib/api.ts`: frontend API client and shared TypeScript types.
-- `frontend/src/lib/auth.ts`: NextAuth Google provider config.
+- `frontend/src/lib/auth.ts`: NextAuth provider and demo credential config.
 
 ## Current Limitations and Known Gaps
 
-- README and root `.env.example` mention OpenAI, but the running backend is configured for Gemini.
+- Root `.env.example` may still need review, but README now describes the Gemini-compatible backend.
 - Frontend auth env variables are not documented in an example file.
-- `/api/chat` does not update metrics, so the Metrics tab may stay empty during normal dashboard chat usage.
+- `/api/chat` does not update the metrics endpoint; only `/api/query` contributes to those counters.
 - `/api/chat` does not run the second self-check that `/api/query` runs.
 - Reconciliation accepts an `invoice` upload but currently ignores it; it only uses chunks already in ChromaDB.
 - Reconciliation does not use dates yet.

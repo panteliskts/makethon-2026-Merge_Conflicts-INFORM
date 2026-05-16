@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .config import settings
-from .routes import ingest, query, chat, reconcile, metrics
+from .routes import admin, ingest, query, chat, reconcile, metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ app.include_router(query.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(reconcile.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 
 @app.on_event("startup")
