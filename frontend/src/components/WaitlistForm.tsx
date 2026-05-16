@@ -8,8 +8,9 @@ export function WaitlistForm() {
   const [company, setCompany] = useState("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !company.trim()) {
       setError("All fields are required.");
@@ -20,7 +21,24 @@ export function WaitlistForm() {
       return;
     }
     setError("");
-    setSubmitted(true); // fake submit — no backend
+    setLoading(true);
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, company }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Something went wrong. Please try again.");
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const inputCls =
@@ -82,10 +100,11 @@ export function WaitlistForm() {
       )}
       <button
         type="submit"
-        className="pressable focus-ring rounded-md px-6 py-3 text-sm font-bold text-white transition-colors"
+        disabled={loading}
+        className="pressable focus-ring rounded-md px-6 py-3 text-sm font-bold text-white transition-colors disabled:opacity-60"
         style={{ background: "var(--color-accent)" }}
       >
-        Join waitlist
+        {loading ? "Submitting…" : "Join waitlist"}
       </button>
     </form>
   );

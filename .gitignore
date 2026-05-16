@@ -3,6 +3,7 @@
 **/.env.*
 !**/.env.example
 !**/.env.local.example
+scripts/create-local-env-prefilled.sh
 
 # Python runtime artifacts
 __pycache__/

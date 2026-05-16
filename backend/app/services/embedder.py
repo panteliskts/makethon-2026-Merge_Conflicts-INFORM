@@ -72,7 +72,7 @@ def _vec_literal(embedding: list[float]) -> str:
 # ── Hybrid search (vector + full-text, RRF fusion) ────────────────────────────
 
 async def hybrid_search(
-    pool,
+    pool,  # asyncpg.Pool | None — None triggers supabase-py RPC path
     query: str,
     tenant_id: str,
     document_id: str | None,
@@ -93,92 +93,112 @@ async def hybrid_search(
     query_vec = (await embed([query], task_type="RETRIEVAL_QUERY"))[0]
     vec_literal = _vec_literal(query_vec)
 
-    # $3 is nullable: NULL means "all documents for this tenant"
-    sql = """
-    WITH vector_hits AS (
+    # ── asyncpg path ──────────────────────────────────────────────────────────
+    if pool is not None:
+        sql = """
+        WITH vector_hits AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    ORDER BY embedding <=> $1::vector
+                ) AS rank
+            FROM document_chunks
+            WHERE tenant_id = $2::uuid
+              AND ($3::uuid IS NULL OR document_id = $3::uuid)
+            ORDER BY embedding <=> $1::vector
+            LIMIT $7
+        ),
+        text_hits AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    ORDER BY ts_rank(search_vector, plainto_tsquery('english', $4)) DESC
+                ) AS rank
+            FROM document_chunks
+            WHERE tenant_id = $2::uuid
+              AND ($3::uuid IS NULL OR document_id = $3::uuid)
+              AND search_vector @@ plainto_tsquery('english', $4)
+            LIMIT $7
+        ),
+        rrf AS (
+            SELECT
+                COALESCE(v.id, t.id) AS id,
+                COALESCE(1.0 / ($5 + v.rank), 0.0)
+                  + COALESCE(1.0 / ($5 + t.rank), 0.0) AS score
+            FROM vector_hits v
+            FULL OUTER JOIN text_hits t ON v.id = t.id
+        )
         SELECT
-            id,
-            ROW_NUMBER() OVER (
-                ORDER BY embedding <=> $1::vector
-            ) AS rank
-        FROM document_chunks
-        WHERE tenant_id = $2::uuid
-          AND ($3::uuid IS NULL OR document_id = $3::uuid)
-        ORDER BY embedding <=> $1::vector
-        LIMIT $7
-    ),
-    text_hits AS (
-        SELECT
-            id,
-            ROW_NUMBER() OVER (
-                ORDER BY ts_rank(search_vector, plainto_tsquery('english', $4)) DESC
-            ) AS rank
-        FROM document_chunks
-        WHERE tenant_id = $2::uuid
-          AND ($3::uuid IS NULL OR document_id = $3::uuid)
-          AND search_vector @@ plainto_tsquery('english', $4)
-        LIMIT $7
-    ),
-    rrf AS (
-        SELECT
-            COALESCE(v.id, t.id) AS id,
-            COALESCE(1.0 / ($5 + v.rank), 0.0)
-              + COALESCE(1.0 / ($5 + t.rank), 0.0) AS score
-        FROM vector_hits v
-        FULL OUTER JOIN text_hits t ON v.id = t.id
-    )
-    SELECT
-        dc.id::text,
-        dc.chunk_index,
-        dc.chunk_type,
-        dc.text,
-        dc.page_num,
-        dc.x0, dc.y0, dc.x1, dc.y1,
-        dc.document_id::text,
-        d.filename        AS source_file,
-        rrf.score,
-        1.0 - (dc.embedding <=> $1::vector) AS vector_score
-    FROM rrf
-    JOIN document_chunks dc ON dc.id = rrf.id
-    JOIN documents        d  ON d.id  = dc.document_id
-    ORDER BY rrf.score DESC
-    LIMIT $6
-    """
+            dc.id::text,
+            dc.chunk_index,
+            dc.chunk_type,
+            dc.text,
+            dc.page_num,
+            dc.x0, dc.y0, dc.x1, dc.y1,
+            dc.document_id::text,
+            d.filename        AS source_file,
+            rrf.score,
+            1.0 - (dc.embedding <=> $1::vector) AS vector_score
+        FROM rrf
+        JOIN document_chunks dc ON dc.id = rrf.id
+        JOIN documents        d  ON d.id  = dc.document_id
+        ORDER BY rrf.score DESC
+        LIMIT $6
+        """
+        rows = await pool.fetch(
+            sql,
+            vec_literal,
+            tenant_id,
+            document_id,
+            query,
+            float(_RRF_K),
+            top_k,
+            candidate_k,
+        )
+        raw = [dict(r) for r in rows]
 
-    rows = await pool.fetch(
-        sql,
-        vec_literal,
-        tenant_id,
-        document_id,
-        query,
-        float(_RRF_K),
-        top_k,
-        candidate_k,
-    )
+    # ── supabase-py RPC path (IPv4 fallback) ──────────────────────────────────
+    else:
+        from . import database as _db
+        sb = _db.get_sb()
+        if sb is None:
+            return []
+        resp = await sb.rpc("hybrid_search_chunks", {
+            "p_embedding":   vec_literal,
+            "p_query":       query,
+            "p_tenant_id":   tenant_id,
+            "p_document_id": document_id,
+            "p_top_k":       top_k,
+            "p_candidate_k": candidate_k,
+        }).execute()
+        # RPC returns column "txt" (renamed to avoid reserved word collision)
+        raw = [
+            {**r, "text": r.pop("txt", r.get("text", "")), "source_file": r.get("source_file", "")}
+            for r in (resp.data or [])
+        ]
 
     return [
         {
-            "id":          row["id"],
-            "text":        row["text"],
-            "chunk_type":  row["chunk_type"],
-            "chunk_index": row["chunk_index"],
-            "page_num":    row["page_num"],
+            "id":           row["id"],
+            "text":         row["text"],
+            "chunk_type":   row["chunk_type"],
+            "chunk_index":  row["chunk_index"],
+            "page_num":     row["page_num"],
             "x0": row["x0"], "y0": row["y0"],
             "x1": row["x1"], "y1": row["y1"],
-            "source_file": row["source_file"],
-            "document_id": row["document_id"],
-            "score":       float(row["score"]),
+            "source_file":  row.get("source_file", ""),
+            "document_id":  row.get("document_id", ""),
+            "score":        float(row["score"]),
             "vector_score": float(row["vector_score"]),
-            # Legacy key — kept for any callers that still read distance
-            "distance":    1.0 - float(row["vector_score"]),
+            "distance":     1.0 - float(row["vector_score"]),
             "metadata": {
                 "chunk_type":  row["chunk_type"],
                 "chunk_index": row["chunk_index"],
                 "page_num":    row["page_num"],
                 "x0": row["x0"], "y0": row["y0"],
                 "x1": row["x1"], "y1": row["y1"],
-                "source_file": row["source_file"],
+                "source_file": row.get("source_file", ""),
             },
         }
-        for row in rows
+        for row in raw
     ]

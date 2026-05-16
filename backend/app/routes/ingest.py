@@ -218,8 +218,19 @@ async def ingest(request: Request, file: UploadFile = File(...)):
 async def list_sources():
     if db.db_available():
         pool = db.get_pool()
-        rows = await pool.fetch("SELECT DISTINCT filename FROM documents ORDER BY filename")
-        return {"sources": [r["filename"] for r in rows]}
+        if pool is not None:
+            rows = await pool.fetch("SELECT DISTINCT filename FROM documents ORDER BY filename")
+            return {"sources": [r["filename"] for r in rows]}
+        # supabase-py path
+        sb = db.get_sb()
+        res = await sb.table("documents").select("filename").order("filename").execute()
+        seen: set[str] = set()
+        sources = []
+        for r in res.data:
+            if r["filename"] not in seen:
+                seen.add(r["filename"])
+                sources.append(r["filename"])
+        return {"sources": sources}
     return {"sources": []}
 
 
