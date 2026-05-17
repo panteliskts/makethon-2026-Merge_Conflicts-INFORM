@@ -19,6 +19,18 @@ async def lifespan(app: FastAPI):
     await db.init_pool()
     # Hydrate in-memory telemetry from Supabase so admin console survives restarts
     await telemetry.load_from_db()
+
+    # Pre-load the LayoutLMv3 invoice extractor (best-effort: if it fails the
+    # ingest path falls back to OCR-only chunks via the chunker's safe wrapper).
+    try:
+        from .services import inference
+        inference.load_model(settings.layoutlm_model_dir)
+    except Exception as exc:
+        logger.warning(
+            "LayoutLMv3 model failed to load at startup (will retry on first ingest): %s",
+            exc,
+        )
+
     logger.info("INFORM Invoice Intelligence API ready")
     yield
 

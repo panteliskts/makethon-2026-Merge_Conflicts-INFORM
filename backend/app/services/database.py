@@ -185,6 +185,19 @@ async def create_document(
     return str(res.data[0]["id"])
 
 
+_META_KEYS = ("source_type", "entity", "confidence", "verification",
+              "agreement", "model_value", "gemini_value")
+
+
+def _extraction_meta(c: dict) -> dict:
+    """Pick the cross-validation fields off a chunk into a JSONB-friendly dict."""
+    out: dict = {}
+    for k in _META_KEYS:
+        if k in c and c[k] is not None and c[k] != "":
+            out[k] = c[k]
+    return out
+
+
 async def insert_chunks(
     pool: asyncpg.Pool | None,
     document_id: str,
@@ -193,6 +206,7 @@ async def insert_chunks(
     embeddings: list[list[float]],
 ) -> None:
     if pool is not None:
+        import json as _json
         records = [
             (
                 document_id, tenant_id,
@@ -201,6 +215,7 @@ async def insert_chunks(
                 float(c.get("x0", 0)), float(c.get("y0", 0)),
                 float(c.get("x1", 0)), float(c.get("y1", 0)),
                 "[" + ",".join(f"{v:.8f}" for v in emb) + "]",
+                _json.dumps(_extraction_meta(c)),
             )
             for c, emb in zip(chunks, embeddings)
         ]
@@ -208,8 +223,8 @@ async def insert_chunks(
             """
             INSERT INTO document_chunks
               (document_id, tenant_id, chunk_index, chunk_type, text,
-               page_num, x0, y0, x1, y1, embedding)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)
+               page_num, x0, y0, x1, y1, embedding, extraction_meta)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12::jsonb)
             """,
             records,
         )
@@ -227,6 +242,7 @@ async def insert_chunks(
             "x0": float(c.get("x0", 0)), "y0": float(c.get("y0", 0)),
             "x1": float(c.get("x1", 0)), "y1": float(c.get("y1", 0)),
             "embedding":   "[" + ",".join(f"{v:.8f}" for v in emb) + "]",
+            "extraction_meta": _extraction_meta(c),
         }
         for c, emb in zip(chunks, embeddings)
     ]

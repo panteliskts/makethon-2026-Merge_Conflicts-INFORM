@@ -56,10 +56,18 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   x1            float4 DEFAULT 0,
   y1            float4 DEFAULT 0,
   embedding     vector(768),
+  -- Cross-validation metadata: source_type, entity, confidence, verification,
+  -- agreement, model_value, gemini_value. JSONB keeps the schema flexible so
+  -- adding a new field later is one INSERT-side change, no migration.
+  extraction_meta jsonb NOT NULL DEFAULT '{}'::jsonb,
   -- Full-text search column, auto-maintained by Postgres
   search_vector tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
   created_at    timestamptz DEFAULT now()
 );
+
+-- For projects where the migration was run before extraction_meta existed:
+ALTER TABLE document_chunks
+  ADD COLUMN IF NOT EXISTS extraction_meta jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- HNSW vector index (cosine similarity, best for normalised embeddings)
 CREATE INDEX IF NOT EXISTS idx_chunks_hnsw

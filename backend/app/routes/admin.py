@@ -77,7 +77,9 @@ async def admin_command(
             f"avg_latency_ms: {round(metrics['total_latency_ms'] / metrics['total_queries'], 1) if metrics['total_queries'] else 0}",
             f"indexed_sources: {len(sources)}",
             f"upload_dir_exists: {Path(settings.upload_dir).exists()}",
-            f"chroma_dir: {settings.chroma_persist_dir}",
+            f"supabase_db: {'configured' if settings.supabase_db_url else 'local-mode'}",
+            f"layoutlm_model_dir: {settings.layoutlm_model_dir}",
+            f"cross_validate_ingest: {settings.cross_validate_ingest}",
         ]
     elif command == "trace":
         events = session.get("events", [])[-10:]

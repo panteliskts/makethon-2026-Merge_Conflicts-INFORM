@@ -83,21 +83,35 @@ export default function PDFViewer({ pdfUrl, highlightedChunks, currentPage, onPa
 
     for (const chunk of pageChunks) {
       const { x0, y0, x1, y1 } = chunk.bbox;
+      // skip degenerate gemini-only boxes (no pixel evidence)
+      if (x1 - x0 <= 0 || y1 - y0 <= 0) continue;
+
       const sx = x0 * SCALE;
       const sy = y0 * SCALE;
       const sw = (x1 - x0) * SCALE;
       const sh = (y1 - y0) * SCALE;
 
-      ctx.fillStyle = "rgba(233, 106, 61, 0.22)";
-      ctx.fillRect(sx, sy, sw, sh);
+      const v = chunk.verification ?? (chunk.source_type === "extracted" ? "model_only" : undefined);
+      // verified=green-deep, model_only=green, gemini_only=blue, disputed=amber, ocr=orange
+      const palette: Record<string, { fill: string; stroke: string; prefix: string }> = {
+        verified:    { fill: "rgba(16, 185, 129, 0.30)", stroke: "#10b981", prefix: "✓✓" },
+        model_only:  { fill: "rgba(56, 189, 130, 0.22)", stroke: "#38bd82", prefix: "✓" },
+        gemini_only: { fill: "rgba(59, 130, 246, 0.22)", stroke: "#3b82f6", prefix: "~" },
+        disputed:    { fill: "rgba(245, 158, 11, 0.28)", stroke: "#f59e0b", prefix: "⚠" },
+      };
+      const style = (v && palette[v]) || { fill: "rgba(233, 106, 61, 0.22)", stroke: "#e96a3d", prefix: "" };
 
-      ctx.strokeStyle = "#e96a3d";
+      ctx.fillStyle = style.fill;
+      ctx.fillRect(sx, sy, sw, sh);
+      ctx.strokeStyle = style.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(sx, sy, sw, sh);
 
-      ctx.fillStyle = "#e96a3d";
+      ctx.fillStyle = style.stroke;
       ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.fillText(chunk.bbox.chunk_type, sx + 4, sy - 4);
+      const conf = chunk.confidence != null ? ` · ${(chunk.confidence * 100).toFixed(0)}%` : "";
+      const label = `${style.prefix} ${chunk.bbox.chunk_type}${conf}`.trim();
+      ctx.fillText(label, sx + 4, sy - 4);
     }
   }
 

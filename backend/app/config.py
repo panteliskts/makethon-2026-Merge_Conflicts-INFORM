@@ -34,5 +34,13 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     admin_api_token: str = ""
 
+    # LayoutLMv3 invoice extractor (our cross-validation layer)
+    layoutlm_model_dir: str = "./models/layoutlmv3-invoice"
+    pdf_render_dpi: int = 200
+    extractor_confidence_threshold: float = 0.60
+    # Cross-validation at ingest: 1 extra Gemini call per page to verify the
+    # model's structured fields. Best-effort: failures fall back to model-only.
+    cross_validate_ingest: bool = True
+    cross_validate_fuzzy_threshold: float = 0.80
 
 settings = Settings()

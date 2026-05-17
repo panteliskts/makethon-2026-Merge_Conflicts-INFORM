@@ -176,7 +176,8 @@ async def hybrid_search(
             dc.document_id::text,
             d.filename        AS source_file,
             rrf.score,
-            1.0 - (dc.embedding <=> $1::vector) AS vector_score
+            1.0 - (dc.embedding <=> $1::vector) AS vector_score,
+            dc.extraction_meta
         FROM rrf
         JOIN document_chunks dc ON dc.id = rrf.id
         JOIN documents        d  ON d.id  = dc.document_id
@@ -215,8 +216,18 @@ async def hybrid_search(
             for r in (resp.data or [])
         ]
 
-    return [
-        {
+    import json as _json
+    results = []
+    for row in raw:
+        # extraction_meta may arrive as dict (asyncpg) or JSON string (RPC).
+        meta = row.get("extraction_meta") or {}
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+
+        results.append({
             "id":           row["id"],
             "text":         row["text"],
             "chunk_type":   row["chunk_type"],
@@ -236,7 +247,14 @@ async def hybrid_search(
                 "x0": row["x0"], "y0": row["y0"],
                 "x1": row["x1"], "y1": row["y1"],
                 "source_file": row.get("source_file", ""),
+                # cross-validation fields (default to ocr_block if absent)
+                "source_type":  meta.get("source_type", "ocr_block"),
+                "entity":       meta.get("entity", ""),
+                "confidence":   float(meta.get("confidence", 1.0)),
+                "verification": meta.get("verification", "model_only"),
+                "agreement":    float(meta.get("agreement", 0.0)),
+                "model_value":  meta.get("model_value", ""),
+                "gemini_value": meta.get("gemini_value", ""),
             },
-        }
-        for row in raw
-    ]
+        })
+    return results

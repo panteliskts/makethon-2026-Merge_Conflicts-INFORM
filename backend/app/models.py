@@ -17,6 +17,13 @@ class ChunkResult(BaseModel):
     bbox: BoundingBox
     score: float
     chunk_index: int
+    source_type: str = "ocr_block"
+    confidence: float = 1.0
+    entity: str = ""
+    verification: str = "model_only"   # verified | model_only | gemini_only | disputed
+    agreement: float = 0.0
+    model_value: str = ""
+    gemini_value: str = ""
 
 
 class Citation(BaseModel):

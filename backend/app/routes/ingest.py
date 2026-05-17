@@ -44,6 +44,22 @@ def _tenant_email(request: Request) -> str:
     return request.headers.get("x-inform-user-email", "demo@inform.app")
 
 
+def _verification_counts(chunks: list[dict]) -> dict:
+    """Count chunks by cross-validation verification status.
+
+    Returns a dict the frontend renders as the post-ingest breakdown:
+      verified / model_only / gemini_only / disputed / ocr_block.
+    """
+    counts = {"verified": 0, "model_only": 0, "gemini_only": 0,
+              "disputed": 0, "ocr_block": 0}
+    for c in chunks:
+        if c.get("source_type") == "ocr_block":
+            counts["ocr_block"] += 1
+        else:
+            counts[c.get("verification", "model_only")] += 1
+    return counts
+
+
 @router.post("/ingest")
 async def ingest(request: Request, file: UploadFile = File(...)):
     t0 = time.monotonic()
@@ -175,6 +191,7 @@ async def ingest(request: Request, file: UploadFile = File(...)):
                 "chunk_count": len(chunks),
                 "cache_hit": False,
                 "latency_ms": latency_ms,
+                **_verification_counts(chunks),
             },
         )
         return {
@@ -184,6 +201,7 @@ async def ingest(request: Request, file: UploadFile = File(...)):
             "preview_url": preview_url,
             "status": "ok",
             "cached": False,
+            "verification": _verification_counts(chunks),
         }
 
     # ── Local fallback (no Supabase creds) ────────────────────────────────────
@@ -205,9 +223,11 @@ async def ingest(request: Request, file: UploadFile = File(...)):
     if not chunks:
         raise HTTPException(status_code=422, detail="No text could be extracted")
 
+    counts = _verification_counts(chunks)
     record_event(request, "ingest", f"Indexed {filename} (local mode)",
                  status="ok",
-                 metadata={"source_file": filename, "chunk_count": len(chunks)})
+                 metadata={"source_file": filename, "chunk_count": len(chunks),
+                           **counts})
 
     return {
         "source_file": filename,
@@ -216,6 +236,7 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         "preview_url": f"{request.base_url}uploads/{filename}",
         "status": "ok",
         "cached": False,
+        "verification": counts,
     }
 
 

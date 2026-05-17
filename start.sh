@@ -107,6 +107,15 @@ if [ ! -f "$ROOT/frontend/.env.local" ]; then
   echo "Created frontend/.env.local with local demo auth defaults."
 fi
 
+if ! command -v tesseract >/dev/null 2>&1; then
+  echo "WARNING: 'tesseract' not found on PATH. Install it before ingesting images:"
+  echo "  Debian/Ubuntu/RPi: sudo apt-get install -y tesseract-ocr poppler-utils"
+  echo "  macOS:             brew install tesseract poppler"
+fi
+if ! command -v pdftoppm >/dev/null 2>&1; then
+  echo "WARNING: 'pdftoppm' (poppler-utils) not found. PDF rasterization for the OCR model will fail."
+fi
+
 REQUESTED_BACKEND_PORT="${BACKEND_PORT:-8000}"
 REQUESTED_FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
