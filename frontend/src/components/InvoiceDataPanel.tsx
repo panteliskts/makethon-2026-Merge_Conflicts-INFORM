@@ -15,18 +15,30 @@ const PDFJS_CDN =
 function PreviewModal({
   sourceFile,
   pdfUrl,
+  localUrl,
   onClose,
 }: {
   sourceFile: string;
   pdfUrl: string;
+  localUrl?: string;
   onClose: () => void;
 }) {
-  const isImage = isImageSource(pdfUrl, sourceFile);
+  const previewUrl = localUrl || pdfUrl;
+  const isImage = isImageSource(previewUrl, sourceFile);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfReady, setPdfReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const renderPage = useCallback(async (doc: any, pageNum: number) => {
     const page = await doc.getPage(pageNum);
@@ -52,7 +64,7 @@ function PreviewModal({
       try {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_CDN;
-        const doc = await pdfjsLib.getDocument(pdfUrl).promise;
+        const doc = await pdfjsLib.getDocument(previewUrl).promise;
         if (cancelled) return;
         setPdfDoc(doc);
         setTotalPages(doc.numPages);
@@ -60,7 +72,7 @@ function PreviewModal({
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, [pdfUrl, isImage, renderPage]);
+  }, [previewUrl, isImage, renderPage]);
 
   async function goToPage(num: number) {
     if (!pdfDoc || num < 1 || num > totalPages) return;
@@ -75,11 +87,11 @@ function PreviewModal({
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Top bar */}
-      <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-black/60 px-5 py-3 backdrop-blur">
-        <span className="max-w-[60vw] truncate text-sm font-semibold text-white">{sourceFile}</span>
-        <div className="flex items-center gap-3">
+      <div className="flex min-w-0 shrink-0 items-center gap-3 border-b border-white/10 bg-black/60 px-3 py-3 backdrop-blur sm:px-5">
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{sourceFile}</span>
+        <div className="flex shrink-0 items-center gap-2">
           {!isImage && totalPages > 1 && (
-            <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 sm:flex">
               <button
                 onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1}
                 className="rounded-md border border-white/20 px-2.5 py-1 text-xs text-white transition hover:bg-white/10 disabled:opacity-30">
@@ -95,17 +107,25 @@ function PreviewModal({
           )}
           <button
             onClick={onClose}
-            className="rounded-md border border-white/20 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10">
-            ✕ Close
+            aria-label="Close preview"
+            title="Close preview"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-white/20 text-lg font-semibold leading-none text-white transition hover:bg-white/10">
+            <span aria-hidden="true">×</span>
           </button>
         </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-6 flex items-start justify-center">
+      <div
+        className="flex-1 overflow-auto p-6 flex items-start justify-center"
+        onClick={onClose}
+      >
         {isImage ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={pdfUrl} alt={sourceFile}
+          <img
+            src={previewUrl}
+            alt={sourceFile}
+            onClick={(e) => e.stopPropagation()}
             className="max-h-full max-w-full rounded-xl shadow-2xl object-contain" />
         ) : (
           <div className="relative min-h-[60vh] min-w-[40vw]">
@@ -114,7 +134,11 @@ function PreviewModal({
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
               </div>
             )}
-            <canvas ref={canvasRef} className="rounded-xl shadow-2xl" />
+            <canvas
+              ref={canvasRef}
+              onClick={(e) => e.stopPropagation()}
+              className="rounded-xl shadow-2xl"
+            />
           </div>
         )}
       </div>
@@ -128,6 +152,7 @@ function PreviewModal({
 export interface UploadedSource {
   sourceFile: string;
   pdfUrl: string;
+  localUrl?: string;
 }
 
 interface Props {
@@ -268,6 +293,7 @@ export default function InvoiceDataPanel({
         <PreviewModal
           sourceFile={previewSource.sourceFile}
           pdfUrl={previewSource.pdfUrl}
+          localUrl={previewSource.localUrl}
           onClose={() => setPreviewSource(null)}
         />
       )}

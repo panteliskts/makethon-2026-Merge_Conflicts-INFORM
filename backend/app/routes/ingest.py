@@ -26,6 +26,7 @@ import time
 import uuid
 import anyio
 from pathlib import Path
+from urllib.parse import quote
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 
 from ..config import settings
@@ -38,6 +39,10 @@ from ..services import storage as store
 router = APIRouter()
 
 _ALLOWED_EXTS = {".pdf", ".jpg", ".jpeg", ".png"}
+
+
+def _local_preview_url(request: Request, filename: str) -> str:
+    return f"{request.base_url}uploads/{quote(filename, safe='')}"
 
 
 def _tenant_email(request: Request) -> str:
@@ -65,8 +70,9 @@ async def ingest(request: Request, file: UploadFile = File(...)):
     t0 = time.monotonic()
 
     # ── Validate file type ────────────────────────────────────────────────────
-    file_ext = Path(file.filename or "").suffix.lower()
-    if not file.filename or file_ext not in _ALLOWED_EXTS:
+    filename = Path(file.filename or "").name
+    file_ext = Path(filename).suffix.lower()
+    if not filename or file_ext not in _ALLOWED_EXTS:
         raise HTTPException(
             status_code=400,
             detail="Only PDF, JPG, and PNG files are accepted",
@@ -82,7 +88,6 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         )
 
     file_hash = hashlib.sha256(file_bytes).hexdigest()
-    filename = file.filename
     email = _tenant_email(request)
 
     # ── Supabase path ─────────────────────────────────────────────────────────
@@ -223,6 +228,12 @@ async def ingest(request: Request, file: UploadFile = File(...)):
     if not chunks:
         raise HTTPException(status_code=422, detail="No text could be extracted")
 
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    await anyio.to_thread.run_sync(
+        lambda: (upload_dir / filename).write_bytes(file_bytes)
+    )
+
     counts = _verification_counts(chunks)
     record_event(request, "ingest", f"Indexed {filename} (local mode)",
                  status="ok",
@@ -233,7 +244,7 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         "source_file": filename,
         "document_id": None,
         "chunk_count": len(chunks),
-        "preview_url": f"{request.base_url}uploads/{filename}",
+        "preview_url": _local_preview_url(request, filename),
         "status": "ok",
         "cached": False,
         "verification": counts,
