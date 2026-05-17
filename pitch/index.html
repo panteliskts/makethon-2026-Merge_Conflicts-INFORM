@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>InvoAI — Pitch Deck</title>
+<style>
+  /* ─── Brand tokens (from app globals.css, dark theme) ───────────── */
+  :root{
+    --bg:#131210; --bg2:#1a1814; --card:#201e1b; --border:#2e2b26;
+    --accent:#e06030; --accent2:#cc5228; --ember:#f09050;
+    --moss:#8aaf5a; --paper:#f0ede6; --ink:#131210;
+    --muted:#8a8278; --text:#f0ede6; --text2:#b7b0a4;
+    --expo:cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--text); overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ─── Deck shell ────────────────────────────────────────────────── */
+  #deck{position:fixed;inset:0}
+  .slide{
+    position:absolute;inset:0;display:flex;flex-direction:column;
+    justify-content:center;padding:6vh 9vw;
+    opacity:0;visibility:hidden;transition:opacity .55s var(--expo);
+    pointer-events:none;
+  }
+  .slide.active{opacity:1;visibility:visible;pointer-events:auto}
+  .slide.landing{padding:0}
+  .slide.active .reveal{animation:rise .7s var(--expo) both}
+  .slide.active .reveal:nth-child(2){animation-delay:.08s}
+  .slide.active .reveal:nth-child(3){animation-delay:.16s}
+  .slide.active .reveal:nth-child(4){animation-delay:.24s}
+  .slide.active .reveal:nth-child(5){animation-delay:.32s}
+  @keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:translateY(0)}}
+
+  .eyebrow{
+    font-size:13px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent);font-weight:700;margin-bottom:18px;
+  }
+  h1{font-size:clamp(38px,6.4vw,86px);line-height:1.02;font-weight:800;letter-spacing:-.02em}
+  h2{font-size:clamp(30px,4.4vw,58px);line-height:1.05;font-weight:800;letter-spacing:-.02em}
+  .lead{font-size:clamp(17px,1.8vw,24px);color:var(--text2);line-height:1.5;max-width:880px;margin-top:20px}
+  .accent{color:var(--accent)}
+  .ember{color:var(--ember)}
+
+  /* ─── Slide 1 — title ───────────────────────────────────────────── */
+  #s-title{align-items:flex-start;justify-content:center}
+  .wordmark{
+    font-size:clamp(72px,15vw,210px);font-weight:800;letter-spacing:-.04em;line-height:.9;
+    background:linear-gradient(120deg,var(--paper) 30%,var(--ember));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .wordmark .dot{color:var(--accent);-webkit-text-fill-color:var(--accent)}
+  .tagline{font-size:clamp(18px,2.4vw,34px);font-weight:600;color:var(--text);margin-top:6px}
+  .title-foot{margin-top:46px;display:flex;gap:28px;align-items:center;color:var(--muted);font-size:15px}
+  .badge{
+    display:inline-flex;align-items:center;gap:8px;padding:7px 14px;
+    border:1px solid var(--border);border-radius:999px;background:var(--card);
+    font-size:13px;color:var(--text2)
+  }
+  .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--moss);box-shadow:0 0 10px var(--moss)}
+
+  /* ════════════════════════════════════════════════════════════════
+     LANDING — faithful port of frontend ScrollCinematic
+     ════════════════════════════════════════════════════════════════ */
+  #stage{position:fixed;inset:0;z-index:1;background:#0c0c0e;opacity:0;
+    transition:opacity .5s var(--expo);pointer-events:none}
+  #stage.on{opacity:1;pointer-events:auto}
+  #frameCanvas{position:absolute;inset:0;display:block;width:100%;height:100%}
+  #stage .dim{position:absolute;inset:0;background:rgba(0,0,0,0.28);pointer-events:none}
+
+  /* screen text overlays — matches ScreenText */
+  .screentext{
+    position:absolute;top:50%;z-index:20;width:56%;max-width:540px;
+    opacity:0;will-change:opacity,transform;pointer-events:none;
+  }
+  .screentext.left{left:48px;text-align:left}
+  .screentext.right{right:48px;text-align:right}
+  .screentext.center{left:50%;width:min(88vw,880px);max-width:880px;text-align:left}
+  /* screen 3 — Problem content over the cinematic */
+  .prob-card{
+    background:rgba(12,12,14,0.80);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:30px 36px;
+  }
+  .prob-card .pain{border-bottom-color:rgba(255,255,255,0.09)}
+  .prob-list{margin-top:14px}
+  .screentext .st-eyebrow{
+    margin-bottom:12px;font-size:12px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.14em;color:var(--accent)
+  }
+  .screentext h2.st-head{
+    margin-bottom:12px;font-weight:800;line-height:1.15;color:#fff;
+    font-size:clamp(1.75rem,3.6vw,2.75rem);letter-spacing:-.02em;
+    text-shadow:0 2px 10px rgba(0,0,0,.85)
+  }
+  .screentext .st-sub{
+    font-size:14px;line-height:1.65;color:#d6d6dc;text-shadow:0 1px 6px rgba(0,0,0,.85)
+  }
+  #lhint{
+    position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:30;
+    font-size:12px;color:rgba(189,189,198,0.7);text-shadow:0 1px 6px rgba(0,0,0,.85);
+    transition:opacity .4s
+  }
+
+  /* ─── Generic content blocks ────────────────────────────────────── */
+  .grid{display:grid;gap:18px;margin-top:36px}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .tile{border:1px solid var(--border);background:var(--card);border-radius:16px;padding:22px}
+  .tile .num{font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.1em}
+  .tile h3{font-size:19px;font-weight:700;margin:10px 0 7px}
+  .tile p{font-size:14px;color:var(--text2);line-height:1.5}
+  .tile .ico{font-size:30px;margin-bottom:6px}
+
+  .pain{display:flex;gap:14px;align-items:flex-start;padding:16px 0;border-bottom:1px solid var(--border)}
+  .pain:last-child{border-bottom:0}
+  .pain .x{flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+    background:rgba(224,96,48,.14);color:var(--accent);font-weight:800;font-size:18px}
+  .pain b{font-size:18px}
+  .pain p{font-size:14px;color:var(--text2);margin-top:2px}
+
+  .flow{display:flex;align-items:center;gap:10px;margin-top:34px;flex-wrap:wrap}
+  .step{border:1px solid var(--border);background:var(--card);border-radius:12px;
+    padding:13px 17px;font-size:14.5px;font-weight:600}
+  .step .s{font-size:11px;color:var(--accent);display:block;letter-spacing:.1em}
+  .arrow{color:var(--muted);font-size:20px}
+
+  .demo-wrap{margin-top:26px;display:flex;gap:30px;align-items:center}
+  .video-box{position:relative;flex:none;width:min(56vw,720px);aspect-ratio:16/9;
+    border:1px solid var(--border);border-radius:16px;overflow:hidden;background:#000}
+  .video-box video{width:100%;height:100%;object-fit:cover;display:block}
+  .placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px;
+    background:repeating-linear-gradient(45deg,#1c1a17 0 22px,#201e1b 22px 44px)}
+  .play{width:78px;height:78px;border-radius:50%;background:var(--accent);
+    display:grid;place-items:center;box-shadow:0 0 40px rgba(224,96,48,.5)}
+  .play::after{content:"";border-style:solid;border-width:15px 0 15px 26px;
+    border-color:transparent transparent transparent #fff;margin-left:6px}
+  .placeholder code{font-size:13px;color:var(--text2);background:var(--bg);
+    padding:5px 10px;border-radius:6px;border:1px solid var(--border)}
+  .placeholder .ph-label{font-size:14px;color:var(--muted);letter-spacing:.05em}
+  .demo-side{flex:1}
+  .demo-side h3{font-size:22px;margin-bottom:14px}
+  .demo-side li{font-size:15px;color:var(--text2);margin:9px 0;list-style:none;
+    padding-left:22px;position:relative}
+  .demo-side li::before{content:"▸";position:absolute;left:0;color:var(--accent)}
+
+  table{border-collapse:collapse;width:100%;margin-top:24px;font-size:13.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border)}
+  th{color:var(--accent);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  td:first-child{font-weight:700;color:var(--text)}
+  tr td:last-child{color:var(--moss)}
+
+  .team{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:38px}
+  .member{border:1px solid var(--border);background:var(--card);border-radius:18px;
+    padding:26px;text-align:center}
+  .avatar{width:104px;height:104px;border-radius:50%;margin:0 auto 16px;
+    background:linear-gradient(140deg,var(--accent),var(--accent2));
+    display:grid;place-items:center;font-size:34px;font-weight:800;color:#fff}
+  .member h3{font-size:20px}
+  .member .role{font-size:13px;color:var(--accent);font-weight:700;margin-top:4px;letter-spacing:.04em}
+  .member p{font-size:13px;color:var(--text2);margin-top:10px;line-height:1.5}
+
+  /* ─── Chrome ─────────────────────────────────────────────────────── */
+  #progress{position:fixed;top:0;left:0;height:3px;background:var(--accent);z-index:60;
+    transition:width .4s var(--expo)}
+  #dots{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);display:flex;gap:9px;z-index:60}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--border);cursor:pointer;transition:.3s}
+  .dot.active{background:var(--accent);transform:scale(1.4)}
+  #counter{position:fixed;bottom:20px;right:26px;font-size:12px;color:var(--muted);z-index:60}
+  #hint{position:fixed;bottom:20px;left:26px;font-size:12px;color:var(--muted);z-index:60}
+  kbd{background:var(--card);border:1px solid var(--border);border-radius:5px;
+    padding:1px 6px;font-size:11px;font-family:inherit}
+  #notes{position:fixed;left:0;right:0;bottom:0;z-index:70;background:rgba(10,9,8,.97);
+    border-top:2px solid var(--accent);padding:18px 26px;transform:translateY(110%);
+    transition:transform .35s var(--expo);max-height:42vh;overflow:auto}
+  #notes.on{transform:translateY(0)}
+  #notes .nlabel{font-size:11px;color:var(--accent);letter-spacing:.14em;
+    text-transform:uppercase;margin-bottom:8px}
+  #notes p{font-size:15px;color:var(--text2);line-height:1.55}
+  .logo-mini{position:fixed;top:18px;right:26px;z-index:55;font-weight:800;
+    letter-spacing:-.02em;font-size:15px;color:var(--text2)}
+  .logo-mini .d{color:var(--accent)}
+
+  /* ─── KPIs ───────────────────────────────────────────────────────── */
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-top:26px}
+  .kpi{border:1px solid var(--border);background:var(--card);border-radius:16px;padding:20px 22px}
+  .kpi .big{font-size:clamp(32px,4vw,48px);font-weight:800;letter-spacing:-.02em;line-height:1;
+    background:linear-gradient(120deg,var(--paper),var(--ember));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .kpi .klabel{font-size:14px;font-weight:700;margin-top:9px}
+  .kpi .ksub{font-size:12px;color:var(--text2);margin-top:4px;line-height:1.45}
+  .kpi-foot{margin-top:18px;font-size:11.5px;color:var(--muted)}
+  .bars{margin-top:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:6px 38px;max-width:880px}
+  .bar{display:flex;align-items:center;gap:12px;font-size:12.5px}
+  .bar .bname{width:122px;color:var(--text2);text-align:right;flex:none}
+  .bar .btrack{flex:1;height:8px;border-radius:5px;background:var(--bg2);overflow:hidden}
+  .bar .bfill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent),var(--ember))}
+  .bar .bval{width:38px;font-weight:700;color:var(--ember);flex:none}
+  .bars-head{margin-top:24px;font-size:12px;font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--accent)}
+  .meth{margin-top:12px;list-style:none}
+  .meth li{font-size:14px;color:var(--text2);margin:9px 0;padding-left:22px;
+    position:relative;line-height:1.5}
+  .meth li::before{content:"▸";position:absolute;left:0;color:var(--accent)}
+  .meth code{font-size:12.5px;background:var(--bg2);border:1px solid var(--border);
+    border-radius:5px;padding:1px 6px}
+  .kpi-split{display:flex;gap:40px;margin-top:22px;align-items:flex-start}
+  .kpi-split>div{flex:1}
+  .bar.weak .bfill{background:linear-gradient(90deg,#7a3b2a,#9a4a2e)}
+  .bar.weak .bval{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div class="logo-mini">Invo<span class="d">AI</span></div>
+
+<!-- ═══ Landing stage — shared canvas + nav + screen text ══════════ -->
+<div id="stage">
+  <canvas id="frameCanvas"></canvas>
+  <div class="dim"></div>
+
+  <!-- screen 0 text (SCREEN1) -->
+  <div class="screentext left" id="text1">
+    <p class="st-eyebrow">Invoice intelligence</p>
+    <h2 class="st-head">Every receipt tells a story. We read it for you.</h2>
+    <p class="st-sub">InvoAI turns paper receipts and invoices into structured, searchable
+      data — instantly and accurately.</p>
+  </div>
+
+  <!-- screen 1 text (SCREEN2) -->
+  <div class="screentext right" id="text2">
+    <h2 class="st-head">From crumpled paper to clean data.</h2>
+    <p class="st-sub">Snap it, scan it, forget it. InvoAI extracts totals, line items,
+      vendors and dates — verified and ready to reconcile.</p>
+  </div>
+
+  <!-- screen 2 text — Problem content (replaces the waitlist form) -->
+  <div class="screentext center" id="text3">
+    <div class="prob-card">
+      <p class="st-eyebrow">The Problem</p>
+      <h2 class="st-head">Extraction isn't the hard part anymore. <span class="accent">Trust is.</span></h2>
+      <div class="prob-list">
+        <div class="pain"><div class="x">!</div><div><b>Answers you can't verify</b>
+          <p>OCR and AI tools spit out numbers — but finance can't see where they came from, so every answer still gets double-checked by hand.</p></div></div>
+        <div class="pain"><div class="x">!</div><div><b>Payments left disconnected</b>
+          <p>Knowing an invoice total is useless until you confirm it was actually paid. That reconciliation step stays manual.</p></div></div>
+        <div class="pain"><div class="x">!</div><div><b>No visibility when it breaks</b>
+          <p>When a client's upload fails or an answer looks wrong, support teams are guessing from screenshots.</p></div></div>
+      </div>
+    </div>
+  </div>
+
+  <p id="lhint">Scroll to explore ↓</p>
+</div>
+
+<!-- ═══ Deck slides ════════════════════════════════════════════════ -->
+<div id="deck">
+
+  <!-- 0 · Title -->
+  <section class="slide" id="s-title">
+    <div class="reveal eyebrow">Team Merge Conflicts · INFORM × UniAI Makeathon 2026</div>
+    <div class="reveal wordmark">Invo<span class="dot">AI</span></div>
+    <div class="reveal tagline">Invoice Intelligence, Done Right.</div>
+    <div class="reveal title-foot">
+      <span class="badge">Team Merge Conflicts</span>
+      <span>Evidence-first invoice AI — Q&amp;A · verification · reconciliation</span>
+    </div>
+  </section>
+
+  <!-- 1 · Landing screen 0 -->
+  <section class="slide landing" data-landing="0"></section>
+  <!-- 2 · Landing screen 1 -->
+  <section class="slide landing" data-landing="1"></section>
+  <!-- 3 · Landing screen 2 — Problem over the cinematic -->
+  <section class="slide landing" data-landing="2"></section>
+
+  <!-- 4 · Solution -->
+  <section class="slide">
+    <div class="reveal eyebrow">Our Solution</div>
+    <h2 class="reveal">InvoAI is <span class="accent">evidence-first</span> invoice intelligence.</h2>
+    <p class="reveal lead">Not just extraction — a verified, supportable workflow. Every answer is
+      tied back to a source chunk and a visible region on the original PDF.</p>
+    <div class="reveal flow">
+      <div class="step"><span class="s">01</span>Upload PDF</div><span class="arrow">→</span>
+      <div class="step"><span class="s">02</span>Ask in plain language</div><span class="arrow">→</span>
+      <div class="step"><span class="s">03</span>Grounded answer</div><span class="arrow">→</span>
+      <div class="step"><span class="s">04</span>Verify on the PDF</div><span class="arrow">→</span>
+      <div class="step"><span class="s">05</span>Reconcile payment</div>
+    </div>
+    <p class="reveal lead" style="margin-top:24px;font-size:16px">
+      Built on a real pipeline: PyMuPDF semantic chunking → embeddings → vector retrieval →
+      grounded LLM answers — with refusal behaviour when the document doesn't contain the answer.</p>
+  </section>
+
+  <!-- 5 · KPIs / how we measure -->
+  <section class="slide">
+    <div class="reveal eyebrow">How We Measure</div>
+    <h2 class="reveal">Real evaluation. <span class="accent">Honest numbers.</span></h2>
+    <div class="reveal kpis" style="grid-template-columns:repeat(3,1fr)">
+      <div class="kpi">
+        <div class="big">1.00</div>
+        <div class="klabel">F1 — invoice № &amp; date</div>
+        <div class="ksub">Perfect field extraction across 50 held-out real invoices.</div>
+      </div>
+      <div class="kpi">
+        <div class="big">0.91</div>
+        <div class="klabel">F1 — line-item names</div>
+        <div class="ksub">Reliable itemized extraction (194 line items, same test set).</div>
+      </div>
+      <div class="kpi">
+        <div class="big">$0</div>
+        <div class="klabel">API cost per page</div>
+        <div class="ksub">Local LayoutLMv3 inference — deterministic, ~5.3s / page.</div>
+      </div>
+    </div>
+    <div class="reveal kpi-split">
+      <div>
+        <div class="bars-head">How it was calculated</div>
+        <ul class="meth">
+          <li>50 held-out real invoices (HQ dataset) + 50 CORD receipts — never seen in training.</li>
+          <li>Per-field <b>precision / recall / F1</b>, exact-match against ground-truth JSON.</li>
+          <li>Confidence threshold 0.6; latency wall-clocked per page.</li>
+          <li>Reproducible via <code>scripts/eval_hq_invoices.py</code> &amp; <code>eval_cord.py</code>.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="bars-head">LayoutLMv3 per-field F1 · 50 real invoices</div>
+        <div class="bars" style="grid-template-columns:1fr;max-width:none">
+          <div class="bar"><span class="bname">Invoice number</span><span class="btrack"><span class="bfill" style="width:100%"></span></span><span class="bval">1.0</span></div>
+          <div class="bar"><span class="bname">Invoice date</span><span class="btrack"><span class="bfill" style="width:100%"></span></span><span class="bval">1.0</span></div>
+          <div class="bar"><span class="bname">Line-item name</span><span class="btrack"><span class="bfill" style="width:91%"></span></span><span class="bval">.91</span></div>
+          <div class="bar"><span class="bname">Company</span><span class="btrack"><span class="bfill" style="width:54%"></span></span><span class="bval">.54</span></div>
+          <div class="bar"><span class="bname">Address</span><span class="btrack"><span class="bfill" style="width:46%"></span></span><span class="bval">.46</span></div>
+          <div class="bar weak"><span class="bname">Total / tax</span><span class="btrack"><span class="bfill" style="width:8%"></span></span><span class="bval">.04</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="kpi-foot">Identifiers and line items are reliable; monetary fields are the current
+      weak spot — which is exactly why InvoAI verifies every answer against the source PDF instead
+      of trusting extraction blindly. Closing monetary-field recall is the top roadmap item.</p>
+  </section>
+
+  <!-- 6 · Differentiation -->
+  <section class="slide">
+    <div class="reveal eyebrow">How We Differentiate</div>
+    <h2 class="reveal">Four things most invoice tools don't do.</h2>
+    <div class="reveal grid g4">
+      <div class="tile"><div class="ico">🎯</div><div class="num">01</div>
+        <h3>Evidence-first Q&amp;A</h3><p>Every answer cites the source chunk it came from. No unsupported claims.</p></div>
+      <div class="tile"><div class="ico">🔍</div><div class="num">02</div>
+        <h3>Visual verification</h3><p>Click a source chip — the exact PDF region highlights. Auditable, not a black box.</p></div>
+      <div class="tile"><div class="ico">🏦</div><div class="num">03</div>
+        <h3>Reconciliation</h3><p>Match invoice totals against bank CSVs: PAID / PARTIAL / UNPAID.</p></div>
+      <div class="tile"><div class="ico">📡</div><div class="num">04</div>
+        <h3>Admin observability</h3><p>Live session telemetry and a safe diagnostic terminal for support teams.</p></div>
+    </div>
+  </section>
+
+  <!-- 6 · Demo 1 -->
+  <section class="slide">
+    <div class="reveal eyebrow">Live Demo · 1 of 3</div>
+    <h2 class="reveal">Ask an invoice anything.</h2>
+    <div class="reveal demo-wrap">
+      <div class="video-box">
+        <video src="videos/demo1.mp4" controls playsinline></video>
+        <div class="placeholder">
+          <div class="play"></div>
+          <div class="ph-label">DEMO VIDEO — Client Q&amp;A</div>
+          <code>pitch/videos/demo1.mp4</code>
+        </div>
+      </div>
+      <div class="demo-side">
+        <h3>What you'll see</h3>
+        <ul>
+          <li>Upload an invoice PDF — indexed in seconds</li>
+          <li>Ask: "What's the total?" · "Who's the vendor?"</li>
+          <li>Grounded answer with source chips</li>
+          <li>Click a chip → region highlights on the PDF</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 · Demo 2 -->
+  <section class="slide">
+    <div class="reveal eyebrow">Live Demo · 2 of 3</div>
+    <h2 class="reveal">Was it actually paid?</h2>
+    <div class="reveal demo-wrap">
+      <div class="video-box">
+        <video src="videos/demo2.mp4" controls playsinline></video>
+        <div class="placeholder">
+          <div class="play"></div>
+          <div class="ph-label">DEMO VIDEO — Bank Reconciliation</div>
+          <code>pitch/videos/demo2.mp4</code>
+        </div>
+      </div>
+      <div class="demo-side">
+        <h3>What you'll see</h3>
+        <ul>
+          <li>Upload a bank statement CSV</li>
+          <li>Select the indexed invoice</li>
+          <li>InvoAI matches the total automatically</li>
+          <li>Result: PAID · PARTIAL · UNPAID</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 · Demo 3 -->
+  <section class="slide">
+    <div class="reveal eyebrow">Live Demo · 3 of 3</div>
+    <h2 class="reveal">When something breaks, see why.</h2>
+    <div class="reveal demo-wrap">
+      <div class="video-box">
+        <video src="videos/demo3.mp4" controls playsinline></video>
+        <div class="placeholder">
+          <div class="play"></div>
+          <div class="ph-label">DEMO VIDEO — Admin Console</div>
+          <code>pitch/videos/demo3.mp4</code>
+        </div>
+      </div>
+      <div class="demo-side">
+        <h3>What you'll see</h3>
+        <ul>
+          <li>Live client sessions &amp; request timeline</li>
+          <li>Error traces and active document context</li>
+          <li>Safe diagnostic terminal — allowlisted commands only</li>
+          <li>healthcheck · trace · sources · errors</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 · Differentiation recap + competition -->
+  <section class="slide">
+    <div class="reveal eyebrow">Why It Wins</div>
+    <h2 class="reveal">Now you've seen it — here's the wedge.</h2>
+    <p class="reveal lead" style="font-size:17px">AP suites automate pieces of the workflow but hide the reasoning.
+      Generic AI chat answers questions but isn't built for finance verification. <span class="ember">InvoAI combines
+      Q&amp;A, visual evidence, reconciliation, and observability in one focused workflow.</span></p>
+    <table class="reveal">
+      <thead><tr><th>Category</th><th>Good at</th><th>Where InvoAI differs</th></tr></thead>
+      <tbody>
+        <tr><td>AP automation suites</td><td>Approvals, payments, vendor workflows</td><td>Evidence-first Q&amp;A + PDF source highlighting</td></tr>
+        <tr><td>OCR / IDP platforms</td><td>Extracting structured fields</td><td>Conversational answers + clickable evidence</td></tr>
+        <tr><td>Generic AI document chat</td><td>Fast ad-hoc summaries</td><td>Invoice-specific: bounding boxes, refusal, reconcile</td></tr>
+        <tr><td>Spreadsheets / manual</td><td>Familiar and flexible</td><td>Every answer traceable to the source document</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 10 · Team -->
+  <section class="slide">
+    <div class="reveal eyebrow">The Team</div>
+    <h2 class="reveal">Team Merge Conflicts</h2>
+    <div class="reveal team">
+      <div class="member">
+        <div class="avatar">PV</div>
+        <h3>Panos Vardalas</h3>
+        <div class="role">Role — placeholder</div>
+        <p>Short bio / contribution goes here.</p>
+      </div>
+      <div class="member">
+        <div class="avatar">PK</div>
+        <h3>Pantelis Kotsas</h3>
+        <div class="role">Role — placeholder</div>
+        <p>Short bio / contribution goes here.</p>
+      </div>
+      <div class="member">
+        <div class="avatar">PK</div>
+        <h3>Pantelis Kontaris</h3>
+        <div class="role">Role — placeholder</div>
+        <p>Short bio / contribution goes here.</p>
+      </div>
+    </div>
+    <p class="reveal lead" style="margin-top:34px;font-size:20px">
+      <span class="accent">InvoAI</span> turns invoice review from manual searching
+      into a verified, supportable workflow. <b>Thank you.</b></p>
+  </section>
+
+</div>
+
+<!-- Chrome -->
+<div id="dots"></div>
+<div id="counter"></div>
+<div id="hint">&larr; &rarr; navigate · <kbd>N</kbd> speaker notes · <kbd>F</kbd> fullscreen</div>
+<div id="notes"><div class="nlabel">Speaker notes</div><p id="notes-text"></p></div>
+
+<script>
+/* ═══ cinematic constants — ported from lib/cinematic.ts ═══════════ */
+const FRAME_COUNT = 151;
+const TRANSITION_MS = 2000;
+const RAMP = 0.25;
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+function easeSmoothStart(t){
+  const a = 1/(RAMP*(2-RAMP));
+  if(t<RAMP) return a*t*t;
+  return 2*a*RAMP*(t-RAMP) + a*RAMP*RAMP;
+}
+/* text-swing tuning — ported from ScrollCinematic.tsx */
+const TEXT_RISE_VH = 0.5;
+const TEXT_SLIDE_VW = 0.55;
+const TEXT_SWING = 0.6;
+
+/* ═══ frame preload — seq1 (transition A) + seq2 (transition B) ═════ */
+const seqPath = (seq,i) => `frames/${seq}/${String(i).padStart(3,'0')}.webp`;
+const frames = { seq1:new Array(FRAME_COUNT), seq2:new Array(FRAME_COUNT) };
+(function preload(){
+  let loaded = 0;
+  const total = FRAME_COUNT*2;
+  ['seq1','seq2'].forEach(seq=>{
+    for(let i=1;i<=FRAME_COUNT;i++){
+      const img = new Image();
+      img.onload = img.onerror = ()=>{
+        if(++loaded===FRAME_COUNT || loaded===total) renderLandingStatic();
+      };
+      img.src = seqPath(seq,i);
+      frames[seq][i-1] = img;
+    }
+  });
+})();
+
+/* ═══ canvas — object-fit cover, centred (coverRect desktop) ═══════ */
+const canvas = document.getElementById('frameCanvas');
+const ctx = canvas.getContext('2d');
+function sizeCanvas(){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  canvas.width  = Math.round(canvas.clientWidth*dpr);
+  canvas.height = Math.round(canvas.clientHeight*dpr);
+}
+function drawFrame(seq, idx){
+  const img = frames[seq][clamp(Math.round(idx),0,FRAME_COUNT-1)];
+  if(!img || !img.naturalWidth) return;
+  const cw=canvas.width, ch=canvas.height;
+  if(!cw||!ch) return;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  const scale = Math.max(cw/iw, ch/ih);
+  const dw=iw*scale, dh=ih*scale;
+  ctx.clearRect(0,0,cw,ch);
+  ctx.drawImage(img,(cw-dw)*0.5,(ch-dh)*0.5,dw,dh);
+}
+
+/* ═══ text overlays — ported applyText/place (3 screens) ══════════ */
+const text1 = document.getElementById('text1');
+const text2 = document.getElementById('text2');
+const text3 = document.getElementById('text3');
+/* p ∈ [0,2]: 0=screen0, 1=screen1, 2=screen2. Transition A (p∈[0,1]) is
+   concurrent; transition B (p∈[1,2]) is sequential — text2 exits over the
+   first half, then text3 rises straight up over the second half. */
+function applyText(p){
+  const rise = window.innerHeight*TEXT_RISE_VH;
+  const slide = window.innerWidth*TEXT_SLIDE_VW;
+  // swinging side block (parabolic arc)
+  const swing = (el,d,side)=>{
+    const vis = clamp((1-Math.abs(d))/0.5,0,1);
+    const dirX = side==='left'?-1:1;
+    const tx = dirX*slide*d*d;
+    const ty = -d*rise;
+    el.style.opacity = vis;
+    el.style.transform = `translateX(${tx}px) translateY(calc(-50% + ${ty}px))`;
+  };
+  // centred block rising straight up from below
+  const riseUp = (el,d)=>{
+    const vis = clamp((1-Math.abs(d))/0.5,0,1);
+    const ty = -d*rise;
+    el.style.opacity = vis;
+    el.style.transform = `translateX(-50%) translateY(calc(-50% + ${ty}px))`;
+  };
+  swing(text1, p, 'left');
+  const f = p-1;
+  const d2 = p<=1 ? p-1 : clamp(2*f,0,1);
+  swing(text2, d2, 'right');
+  const d3 = p<=1 ? -1 : clamp(2*f-1,0,1)-1;
+  riseUp(text3, d3);
+}
+
+/* ═══ landing state ════════════════════════════════════════════════ */
+/* scene 0 = seq1 frame 0 ; scene 1 = seq1 frame 150 ; scene 2 = seq2 frame 150 */
+const sceneFrame = [['seq1',0],['seq1',FRAME_COUNT-1],['seq2',FRAME_COUNT-1]];
+function renderLandingStatic(){
+  const li = landingIndex(cur);
+  if(li<0) return;
+  sizeCanvas();
+  drawFrame(sceneFrame[li][0], sceneFrame[li][1]);
+  applyText(li);
+}
+
+/* ═══ deck engine ══════════════════════════════════════════════════ */
+const slides = [...document.querySelectorAll('.slide')];
+const stage  = document.getElementById('stage');
+const lhint  = document.getElementById('lhint');
+let cur = 0;
+let playing = false;
+
+const notes = [
+ "Open strong. 'We're Merge Conflicts, and this is InvoAI — invoice intelligence, done right.' Pause on the name.",
+ "This is our actual product landing page. Every receipt tells a story — InvoAI reads it for you. Scroll to play the transition.",
+ "Screen two: from crumpled paper to clean data. Totals, line items, vendors, dates — verified and ready to reconcile.",
+ "30-60 sec only. Extraction is solved — trust isn't. Answers you can't verify, payments disconnected, no visibility when it breaks.",
+ "InvoAI is evidence-first. Walk the 5-step flow. Mention the real RAG pipeline and refusal behaviour — no hallucinations.",
+ "How we measure — real eval on 50 held-out invoices. 1.00 F1 on invoice number and date, 0.91 on line items. Be upfront: total/tax are weak — that's exactly why we verify against the PDF. Judges reward this honesty.",
+ "Four differentiators. Land each one in a sentence. These are the bonus-challenge points the brief rewards.",
+ "Demo 1 — Client Q&A. Let the video carry it. Call out the source chip → PDF highlight as THE differentiator.",
+ "Demo 2 — Reconciliation. This is where extracted data becomes operationally useful: was the invoice paid?",
+ "Demo 3 — Admin console. Most demos show only the happy path. We also show how the system gets supported.",
+ "Recap after they've seen it. We're a focused wedge, not a full AP suite. Verifiable + supportable invoice AI.",
+ "Introduce each member. Close on the one-liner: manual searching → verified, supportable workflow. Thank the judges."
+];
+
+const progress = document.getElementById('progress');
+const counter  = document.getElementById('counter');
+const dotsWrap = document.getElementById('dots');
+slides.forEach((_,i)=>{
+  const d=document.createElement('div'); d.className='dot';
+  d.onclick=()=>goto(i); dotsWrap.appendChild(d);
+});
+const dots=[...document.querySelectorAll('.dot')];
+
+function landingIndex(i){
+  const s=slides[i];
+  return s && s.hasAttribute('data-landing') ? +s.dataset.landing : -1;
+}
+function showChrome(){
+  progress.style.width = (cur/(slides.length-1))*100 + '%';
+  counter.textContent = (cur+1)+' / '+slides.length;
+  dots.forEach((d,i)=>d.classList.toggle('active',i===cur));
+  document.getElementById('notes-text').textContent = notes[cur];
+}
+function updateActive(){
+  slides.forEach((s,i)=>s.classList.toggle('active', i===cur));
+}
+function setStage(li){
+  if(li<0){ stage.classList.remove('on'); return; }
+  stage.classList.add('on');
+  sizeCanvas();
+  drawFrame(sceneFrame[li][0], sceneFrame[li][1]);
+  applyText(li);
+  lhint.style.opacity = li===0 ? '1' : '0';
+}
+
+/* faithful transition tween — 2000ms, easeSmoothStart, text leads receipt.
+   Transition A (scenes 0↔1) uses seq1; transition B (scenes 1↔2) uses seq2. */
+function playLanding(fromLi, toLi){
+  playing = true;
+  lhint.style.opacity = '0';
+  const forward = toLi > fromLi;
+  const base = Math.min(fromLi, toLi);      // transition spans [base, base+1]
+  const seq = base === 0 ? 'seq1' : 'seq2';
+  let start = null;
+  function step(now){
+    if(start===null) start=now;
+    const raw = clamp((now-start)/TRANSITION_MS,0,1);
+    const eased = easeSmoothStart(raw);
+    const fwd = forward ? eased : 1-eased;
+    drawFrame(seq, fwd*(FRAME_COUNT-1));
+    const textProg = clamp(eased/TEXT_SWING,0,1);
+    applyText(base + (forward ? textProg : 1-textProg));
+    if(raw<1){ requestAnimationFrame(step); }
+    else { playing=false; }
+  }
+  requestAnimationFrame(step);
+}
+
+function goto(next){
+  if(playing || next<0 || next>=slides.length || next===cur) return;
+  const fromLi = landingIndex(cur), toLi = landingIndex(next);
+
+  /* animated receipt transition between adjacent landing scenes */
+  if(fromLi>=0 && toLi>=0 && Math.abs(toLi-fromLi)===1){
+    sizeCanvas();
+    cur = next; updateActive(); showChrome();
+    playLanding(fromLi, toLi);
+    return;
+  }
+
+  cur = next;
+  updateActive();
+  setStage(toLi);
+  showChrome();
+}
+
+/* keyboard + scroll + touch */
+let wheelLock=false;
+function nav(dir){ goto(cur+dir); }
+window.addEventListener('keydown',e=>{
+  if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){ e.preventDefault(); nav(1); }
+  else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){ e.preventDefault(); nav(-1); }
+  else if(e.key==='Home'){ goto(0); }
+  else if(e.key==='End'){ goto(slides.length-1); }
+  else if(e.key.toLowerCase()==='n'){ document.getElementById('notes').classList.toggle('on'); }
+  else if(e.key.toLowerCase()==='f'){
+    document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+  }
+});
+window.addEventListener('wheel',e=>{
+  if(wheelLock||playing) return;
+  if(Math.abs(e.deltaY)<24) return;
+  wheelLock=true; nav(e.deltaY>0?1:-1);
+  setTimeout(()=>wheelLock=false,720);
+},{passive:true});
+let ty=0;
+window.addEventListener('touchstart',e=>ty=e.touches[0].clientY,{passive:true});
+window.addEventListener('touchend',e=>{
+  const dy=ty-e.changedTouches[0].clientY;
+  if(Math.abs(dy)>50) nav(dy>0?1:-1);
+},{passive:true});
+window.addEventListener('resize',()=>{ if(landingIndex(cur)>=0) renderLandingStatic(); });
+
+/* init */
+function start(){
+  updateActive();
+  setStage(landingIndex(cur));
+  showChrome();
+}
+window.addEventListener('load',start);
+start();
+</script>
+</body>
+</html>
