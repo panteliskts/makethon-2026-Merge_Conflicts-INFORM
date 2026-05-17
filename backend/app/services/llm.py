@@ -216,20 +216,41 @@ def _fuzzy_contains(quote: str, text: str, threshold: float = 0.75) -> bool:
     return False
 
 
-def _validate_citations(sources: list[dict], chunks: list[dict]) -> list[dict]:
+def _validate_citations(sources, chunks: list[dict]) -> list[dict]:
     """
     Keep only citations where:
       1. chunk_id matches a real retrieved chunk.
       2. The quoted text has ≥ 0.75 fuzzy similarity to content in that chunk.
+
+    Defensive against the LLM returning sources as strings, a single object,
+    or any other malformed shape — we just drop anything we can't normalise
+    rather than crashing the chat route.
     """
+    if isinstance(sources, dict):
+        sources = [sources]
+    if not isinstance(sources, list):
+        return []
+
     chunk_map = {_chunk_id(c): c for c in chunks}
     valid: list[dict] = []
     for src in sources:
-        cid = src.get("chunk_id", "")
-        quote = src.get("quote", "").strip()
+        if isinstance(src, str):
+            # LLM gave a bare chunk_id — keep it if the id is real, no quote
+            # check possible without one.
+            cid = src.strip()
+            chunk = chunk_map.get(cid)
+            if chunk:
+                valid.append({"chunk_id": cid, "quote": ""})
+            continue
+        if not isinstance(src, dict):
+            continue
+        cid = str(src.get("chunk_id", "") or "").strip()
+        quote = str(src.get("quote", "") or "").strip()
         chunk = chunk_map.get(cid)
-        if chunk and _fuzzy_contains(quote, chunk["text"]):
-            valid.append(src)
+        if not chunk:
+            continue
+        if not quote or _fuzzy_contains(quote, chunk["text"]):
+            valid.append({"chunk_id": cid, "quote": quote})
     return valid
 
 

@@ -168,5 +168,5 @@ async def query_endpoint(req: QueryRequest, request: Request):
         grounded=grounded,
         refused=refused,
         failure_mode=failure_mode,
-        citations=[Citation(**c) for c in citations],
+        citations=[Citation(**c) for c in citations if isinstance(c, dict)],
     )

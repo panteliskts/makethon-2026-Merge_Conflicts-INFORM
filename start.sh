@@ -60,9 +60,27 @@ find_free_port() {
   echo "$port"
 }
 
+primary_lan_ip() {
+  # First non-loopback, non-docker IPv4 the box owns. Used so that when we
+  # bind to 0.0.0.0 the URLs we hand out are reachable from other machines
+  # on the LAN, not just from 127.0.0.1 on the Pi itself.
+  ip -4 -o addr show scope global 2>/dev/null \
+    | awk '{print $2, $4}' \
+    | grep -Ev '^(docker|br-|veth|vbox)' \
+    | head -1 \
+    | awk '{print $2}' | cut -d/ -f1
+}
+
 url_host_for_bind_host() {
   case "$1" in
-    0.0.0.0|::) echo "127.0.0.1" ;;
+    0.0.0.0|::)
+      lan_ip="$(primary_lan_ip)"
+      if [ -n "$lan_ip" ]; then
+        echo "$lan_ip"
+      else
+        echo "127.0.0.1"
+      fi
+      ;;
     *) echo "$1" ;;
   esac
 }
@@ -137,7 +155,12 @@ fi
 
 BACKEND_URL="http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
 FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
+# Allow CORS from the LAN URL, plus localhost and 127.0.0.1 (any local browser tab).
 FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}"
+LAN_IP="$(primary_lan_ip || true)"
+if [ -n "$LAN_IP" ] && [ "$LAN_IP" != "$FRONTEND_URL_HOST" ]; then
+  FRONTEND_CORS_ORIGINS="${FRONTEND_CORS_ORIGINS},http://${LAN_IP}:${FRONTEND_PORT}"
+fi
 
 # Backend
 cd "$ROOT/backend"
@@ -158,11 +181,13 @@ else
   exit 1
 fi
 
-python -m pip install -q -r requirements.txt 2>&1 | grep -v "^$\|already satisfied\|notice\|WARNING: pip"
+python -m pip install -q -r requirements.txt 2>&1 \
+  | grep -v "^$\|already satisfied\|notice\|WARNING: pip" || true
 CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload \
   --host "$BACKEND_HOST" --port "$BACKEND_PORT" \
   --log-level error \
-  2>&1 | grep -Ev "^$|Will watch|Started reloader|Started server|Application startup|Uvicorn running|INFO:|WARNING:" &
+  2>&1 \
+  | { grep -Ev "^$|Will watch|Started reloader|Started server|Application startup|Uvicorn running|INFO:|WARNING:" || true; } &
 BACKEND_PID=$!
 
 # Frontend
@@ -176,7 +201,7 @@ rm -rf .next 2>/dev/null || true
 
 NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" \
   npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
-  | grep -Ev "^\s*$|○ Compiling|✓ Compiled|✓ Starting|✓ Ready|▲ Next|- Local|- Network|- Environments" &
+  | { grep -Ev "^\s*$|○ Compiling|✓ Compiled|✓ Starting|✓ Ready|▲ Next|- Local|- Network|- Environments" || true; } &
 FRONTEND_PID=$!
 
 echo ""
