@@ -1,5 +1,9 @@
 # Local environment files. Keep the checked-in .env.example files for setup.
-
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.local.example
+scripts/create-local-env-prefilled.sh
 
 # Python runtime artifacts
 __pycache__/

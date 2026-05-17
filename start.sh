@@ -60,6 +60,13 @@ find_free_port() {
   echo "$port"
 }
 
+url_host_for_bind_host() {
+  case "$1" in
+    0.0.0.0|::) echo "127.0.0.1" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 cleanup() {
   echo ""
   echo "==> Stopping servers..."
@@ -75,14 +82,24 @@ trap cleanup INT TERM EXIT
 
 if [ ! -f "$ROOT/backend/.env" ]; then
   cp "$ROOT/backend/.env.example" "$ROOT/backend/.env"
-  echo "Created backend/.env - set your GEMINI_API_KEY before continuing."
+  echo "Created backend/.env from backend/.env.example."
+  echo "Set GEMINI_API_KEY before continuing."
+  echo "For shared team persistence, also set SUPABASE_URL, SUPABASE_SERVICE_KEY, and SUPABASE_DB_URL."
+  echo "Ask the team lead for the private values; do not commit backend/.env."
   echo "Edit $ROOT/backend/.env then re-run this script."
   exit 1
 fi
 
-if grep -q "AIza\.\.\." "$ROOT/backend/.env"; then
-  echo "ERROR: backend/.env still has the placeholder key. Set GEMINI_API_KEY first."
+if grep -Eq "^GEMINI_API_KEY=($|AIza\\.\\.\\.|your-)" "$ROOT/backend/.env"; then
+  echo "ERROR: backend/.env is missing GEMINI_API_KEY."
+  echo "Ask the team lead for the private backend/.env values, then re-run this script."
   exit 1
+fi
+
+if grep -Eq "^SUPABASE_(URL|SERVICE_KEY|DB_URL)=$" "$ROOT/backend/.env"; then
+  echo "WARNING: one or more Supabase values are blank in backend/.env."
+  echo "         The backend can start in local-only mode, but shared team persistence/storage needs:"
+  echo "         SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_DB_URL"
 fi
 
 if [ ! -f "$ROOT/frontend/.env.local" ]; then
@@ -103,6 +120,8 @@ REQUESTED_BACKEND_PORT="${BACKEND_PORT:-8000}"
 REQUESTED_FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+BACKEND_URL_HOST="${BACKEND_URL_HOST:-$(url_host_for_bind_host "$BACKEND_HOST")}"
+FRONTEND_URL_HOST="${FRONTEND_URL_HOST:-$(url_host_for_bind_host "$FRONTEND_HOST")}"
 PYTHON_BIN="$(find_python)"
 
 BACKEND_PORT="$(find_free_port "$BACKEND_HOST" "$REQUESTED_BACKEND_PORT")"
@@ -116,15 +135,14 @@ if [ "$FRONTEND_PORT" != "$REQUESTED_FRONTEND_PORT" ]; then
   echo "Frontend port $REQUESTED_FRONTEND_PORT is in use; using $FRONTEND_PORT instead."
 fi
 
-BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
-FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}"
-FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT}"
+BACKEND_URL="http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
+FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
+FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}"
 
 # Backend
-echo "==> Starting backend..."
 cd "$ROOT/backend"
 if [ ! -d "venv" ]; then
-  echo "    Creating virtualenv with $PYTHON_BIN..."
+  echo "Creating Python virtualenv…"
   "$PYTHON_BIN" -m venv venv
 fi
 
@@ -140,31 +158,30 @@ else
   exit 1
 fi
 
-echo "    Using $(python --version 2>&1)"
-echo "    Installing Python packages; first run can take a few minutes..."
-python -m pip install -r requirements.txt
-CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT" &
+python -m pip install -q -r requirements.txt 2>&1 | grep -v "^$\|already satisfied\|notice\|WARNING: pip"
+CORS_ORIGINS="$FRONTEND_CORS_ORIGINS" uvicorn app.main:app --reload \
+  --host "$BACKEND_HOST" --port "$BACKEND_PORT" \
+  --log-level error \
+  2>&1 | grep -Ev "^$|Will watch|Started reloader|Started server|Application startup|Uvicorn running|INFO:|WARNING:" &
 BACKEND_PID=$!
 
 # Frontend
-echo "==> Starting frontend..."
 cd "$ROOT/frontend"
 if [ ! -d "node_modules" ]; then
-  echo "    Installing npm packages; first run can take a few minutes..."
-  npm install
+  echo "Installing npm packages…"
+  npm install --silent
 fi
 
-if [ -d ".next" ]; then
-  echo "    Clearing stale Next.js dev build..."
-  rm -rf .next
-fi
+rm -rf .next 2>/dev/null || true
 
-NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" &
+NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" \
+  npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
+  | grep -Ev "^\s*$|○ Compiling|✓ Compiled|✓ Starting|✓ Ready|▲ Next|- Local|- Network|- Environments" &
 FRONTEND_PID=$!
 
 echo ""
-echo "  Backend  -> $BACKEND_URL"
-echo "  Frontend -> $FRONTEND_URL"
+echo "  Backend  -> $BACKEND_URL (listening on ${BACKEND_HOST}:${BACKEND_PORT})"
+echo "  Frontend -> $FRONTEND_URL (listening on ${FRONTEND_HOST}:${FRONTEND_PORT})"
 echo ""
 echo "Press Ctrl+C to stop both servers."
 

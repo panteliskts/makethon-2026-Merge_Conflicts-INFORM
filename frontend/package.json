@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.105.4",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "framer-motion": "^12.38.0",

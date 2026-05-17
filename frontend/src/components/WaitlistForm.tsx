@@ -8,8 +8,9 @@ export function WaitlistForm() {
   const [company, setCompany] = useState("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !company.trim()) {
       setError("All fields are required.");
@@ -20,14 +21,31 @@ export function WaitlistForm() {
       return;
     }
     setError("");
-    setSubmitted(true); // fake submit — no backend
+    setLoading(true);
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, company }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Something went wrong. Please try again.");
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const inputCls =
-    "w-full rounded-md border px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-[var(--color-accent)]";
+    "w-full rounded-md border px-3 py-2.5 text-sm text-white placeholder:text-white/60 outline-none transition-colors focus:border-[var(--color-accent)]";
   const inputStyle = {
-    background: "rgba(255,255,255,0.04)",
-    borderColor: "rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.35)",
   };
 
   if (submitted) {
@@ -49,7 +67,7 @@ export function WaitlistForm() {
         <h2 className="mb-1.5 text-2xl font-extrabold text-white">
           Be first in line.
         </h2>
-        <p className="mb-2 text-sm" style={{ color: "#bdbdc6" }}>
+        <p className="mb-2 text-sm" style={{ color: "#e2e2ea" }}>
           Join the INFORM waitlist and get early access when we launch.
         </p>
       </div>
@@ -82,10 +100,11 @@ export function WaitlistForm() {
       )}
       <button
         type="submit"
-        className="pressable focus-ring rounded-md px-6 py-3 text-sm font-bold text-white transition-colors"
+        disabled={loading}
+        className="pressable focus-ring rounded-md px-6 py-3 text-sm font-bold text-white transition-colors disabled:opacity-60"
         style={{ background: "var(--color-accent)" }}
       >
-        Join waitlist
+        {loading ? "Submitting…" : "Join waitlist"}
       </button>
     </form>
   );

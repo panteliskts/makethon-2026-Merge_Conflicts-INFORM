@@ -134,8 +134,11 @@ export interface ChunkResult {
 
 export interface IngestResponse {
   source_file: string;
+  document_id: string | null;
   chunk_count: number;
+  preview_url: string;   // signed Supabase Storage URL (or local fallback)
   status: string;
+  cached: boolean;
   verification?: {
     verified?: number;
     model_only?: number;
@@ -287,6 +290,42 @@ export async function getMetrics(): Promise<MetricsResponse> {
   const res = await fetch(`${API_BASE}/api/metrics`, { headers: withDiagnosticHeaders() });
   if (!res.ok) throw new Error(await readErrorMessage(res, "Metrics fetch failed"));
   return res.json();
+}
+
+export interface UsageResponse {
+  total_requests: number;
+  cache_hits: number;
+  cache_misses: number;
+  cache_hit_rate_pct: number;
+  cache_size: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  rate_limit_hits: number;
+  context_window_limit: number;
+  requests_per_day_limit: number;
+}
+
+export async function getUsage(): Promise<UsageResponse> {
+  const res = await fetch(`${API_BASE}/api/usage`, { headers: withDiagnosticHeaders() });
+  if (!res.ok) throw new Error(await readErrorMessage(res, "Usage fetch failed"));
+  return res.json();
+}
+
+export interface InvoiceChunk {
+  text: string;
+  chunk_type: "header" | "line_item" | "totals" | "payment_terms" | string;
+  page_num: number;
+  chunk_index: number;
+}
+
+export async function getDocumentChunks(sourceFile: string): Promise<InvoiceChunk[]> {
+  const res = await fetch(
+    `${API_BASE}/api/chunks?source_file=${encodeURIComponent(sourceFile)}`,
+    { headers: withDiagnosticHeaders() },
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.chunks ?? [];
 }
 
 export async function listSources(): Promise<string[]> {

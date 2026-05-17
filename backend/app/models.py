@@ -26,6 +26,11 @@ class ChunkResult(BaseModel):
     gemini_value: str = ""
 
 
+class Citation(BaseModel):
+    chunk_id: str
+    quote: str
+
+
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 5
@@ -37,6 +42,10 @@ class QueryResponse(BaseModel):
     chunks: list[ChunkResult]
     grounded: bool
     refused: bool
+    # "retrieval" = no relevant chunks found; "grounding" = chunks found but
+    # answer not supported; None = successfully grounded.
+    failure_mode: Optional[str] = None
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ChatMessage(BaseModel):
@@ -54,6 +63,8 @@ class ChatResponse(BaseModel):
     chunks: list[ChunkResult]
     grounded: bool
     refused: bool
+    failure_mode: Optional[str] = None
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ReconcileResult(BaseModel):

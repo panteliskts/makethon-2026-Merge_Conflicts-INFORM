@@ -326,7 +326,12 @@ export default function ScrollCinematic() {
         className="absolute bottom-[3vh] left-1/2 z-20 -translate-x-1/2"
         style={{ opacity: 0, pointerEvents: "none", willChange: "opacity" }}
       >
-        <WaitlistForm />
+        <div
+          className="rounded-xl px-8 py-7"
+          style={{ background: "rgba(12,12,14,0.72)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+        >
+          <WaitlistForm />
+        </div>
       </div>
 
       {/* Scroll hint */}

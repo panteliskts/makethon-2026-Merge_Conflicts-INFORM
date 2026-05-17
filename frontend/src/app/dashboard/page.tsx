@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
+import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { clearDiagnosticsIdentity, setDiagnosticsIdentity, type ChunkResult } from "@/lib/api";
+import { clearDiagnosticsIdentity, setDiagnosticsIdentity, ingestFile } from "@/lib/api";
+import InvoiceDataPanel, { type UploadedSource } from "@/components/InvoiceDataPanel";
 import ChatPanel from "@/components/ChatPanel";
 import ReconcilePanel from "@/components/ReconcilePanel";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
 import { useLocale } from "@/lib/useLocale";
-
-const PDFViewer = dynamic(() => import("@/components/PDFViewer"), { ssr: false });
 
 type Tab = "chat" | "reconcile";
 
@@ -20,11 +18,16 @@ export default function Home() {
     { id: "chat", label: t.dashboard.tabs.chat },
     { id: "reconcile", label: t.dashboard.tabs.reconcile },
   ];
+
   const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [activeBboxes, setActiveBboxes] = useState<ChunkResult[]>([]);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [sourceFile, setSourceFile] = useState<string | null>(null);
+  const [sources, setSources] = useState<UploadedSource[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Shared file input ref lives here so both ChatPanel and InvoiceDataPanel can use it
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const role = session?.user?.role ?? "client";
 
   useEffect(() => {
@@ -35,8 +38,52 @@ export default function Home() {
     });
   }, [session?.user?.email, session?.user?.name, role]);
 
+  const activeSource = sources[activeIndex] ?? null;
+
+  async function handleFilesSelected(files: FileList) {
+    const allowed = ["pdf", "jpg", "jpeg", "png"];
+    const validFiles = Array.from(files).filter((f) => {
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+      return allowed.includes(ext);
+    });
+
+    if (validFiles.length === 0) {
+      setUploadError("Please upload PDF, JPG, or PNG files only.");
+      return;
+    }
+
+    setUploadError(null);
+    setUploading(true);
+
+    const newSources: UploadedSource[] = [];
+    for (const file of validFiles) {
+      try {
+        const result = await ingestFile(file);
+        newSources.push({ sourceFile: result.source_file, pdfUrl: result.preview_url });
+      } catch (e: any) {
+        setUploadError(e.message || `Failed to upload ${file.name}`);
+      }
+    }
+
+    if (newSources.length > 0) {
+      setSources((prev) => {
+        const combined = [...prev, ...newSources];
+        // Auto-select the first newly uploaded file
+        setActiveIndex(combined.length - newSources.length);
+        return combined;
+      });
+    }
+
+    setUploading(false);
+
+    // Reset the file input so the same file can be re-selected if needed
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   return (
     <div className="flex h-[100dvh] flex-col bg-background">
+
+      {/* ── Header ──────────────────────────────────────────────── */}
       <header className="grid shrink-0 grid-cols-[1fr_auto] gap-3 border-b border-card-border bg-sidebar px-4 py-3 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-accent text-ink shadow-glow">
@@ -53,15 +100,12 @@ export default function Home() {
 
         <nav className="order-3 col-span-2 flex rounded-lg border border-card-border bg-background p-1 sm:order-none sm:col-span-1">
           {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`pressable focus-ring flex-1 rounded-md px-4 py-2 text-sm ${
                 activeTab === tab.id
                   ? "bg-paper font-bold text-ink shadow-inset"
                   : "text-text-secondary hover:bg-card hover:text-text-primary"
-              }`}
-            >
+              }`}>
               {tab.label}
             </button>
           ))}
@@ -71,10 +115,8 @@ export default function Home() {
           <ThemeToggle />
           <LangToggle />
           {role === "admin" && (
-            <a
-              href="/admin"
-              className="pressable focus-ring hidden rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary md:inline-flex"
-            >
+            <a href="/admin"
+              className="pressable focus-ring hidden rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary md:inline-flex">
               Admin
             </a>
           )}
@@ -83,37 +125,43 @@ export default function Home() {
             <img src={session.user.image} alt="avatar" className="h-8 w-8 rounded-md" />
           )}
           {session?.user?.name && (
-            <span className="hidden max-w-[9rem] truncate text-xs text-text-secondary lg:block">{session.user.name}</span>
+            <span className="hidden max-w-[9rem] truncate text-xs text-text-secondary lg:block">
+              {session.user.name}
+            </span>
           )}
           <button
-            onClick={() => {
-              clearDiagnosticsIdentity();
-              signOut({ callbackUrl: "/" });
-            }}
-            className="pressable focus-ring rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary"
-          >
+            onClick={() => { clearDiagnosticsIdentity(); signOut({ callbackUrl: "/" }); }}
+            className="pressable focus-ring rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary">
             {t.nav.signout}
           </button>
         </div>
       </header>
 
+      {/* ── Main ────────────────────────────────────────────────── */}
       <main id="main-content" className="flex-1 overflow-hidden">
+
         {activeTab === "chat" && (
           <div className="flex h-full flex-col lg:flex-row">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-card-border lg:border-b-0 lg:border-r">
-              <ChatPanel
-                onChunksHighlight={setActiveBboxes}
-                onPdfLoad={(url) => { setPdfUrl(url); setActiveBboxes([]); }}
-                sourceFile={sourceFile}
-                onSourceFileChange={setSourceFile}
+            {/* Left: invoice list */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-card-border lg:max-w-[320px] lg:border-b-0 lg:border-r">
+              <InvoiceDataPanel
+                sources={sources}
+                activeIndex={activeIndex}
+                onSelectSource={setActiveIndex}
+                fileInputRef={fileInputRef}
+                uploading={uploading}
+                uploadError={uploadError}
+                onFilesSelected={handleFilesSelected}
               />
             </div>
+
+            {/* Right: chat */}
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <PDFViewer
-                pdfUrl={pdfUrl}
-                highlightedChunks={activeBboxes}
-                currentPage={currentPage}
-                onPageChange={setCurrentPage}
+              <ChatPanel
+                sourceFile={activeSource?.sourceFile ?? null}
+                onChunksHighlight={() => {}}
+                onAttachClick={() => fileInputRef.current?.click()}
+                onFileDrop={handleFilesSelected}
               />
             </div>
           </div>

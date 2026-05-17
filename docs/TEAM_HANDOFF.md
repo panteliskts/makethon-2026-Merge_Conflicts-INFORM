@@ -112,17 +112,17 @@ The backend code currently reads these variables from `backend/.env` through `ba
 
 ```env
 GEMINI_API_KEY=...
-CHROMA_PERSIST_DIR=./chroma_db
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+GEMINI_EMBED_MODEL=gemini-embedding-001
+GEMINI_CHAT_MODEL=gemini-2.5-flash-lite
+SUPABASE_URL=https://<ref>.supabase.co
+SUPABASE_SERVICE_KEY=<service-role-key>
+SUPABASE_DB_URL=postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres
 UPLOAD_DIR=./uploads
 ```
 
-The Gemini config defaults are:
-
-- `GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`
-- `GEMINI_EMBED_MODEL=text-embedding-004`
-- `GEMINI_CHAT_MODEL=gemini-2.0-flash`
-
-Important mismatch: `README.md` and the root `.env.example` still mention `OPENAI_API_KEY`, but the backend code and `backend/.env.example` use `GEMINI_API_KEY`.
+Real `backend/.env` files are local-only and must not be committed. Share the
+private values through the team password manager or another secure channel.
 
 ### Frontend
 
@@ -135,7 +135,7 @@ NEXTAUTH_SECRET=...
 NEXTAUTH_URL=http://localhost:3000
 ```
 
-These are not currently documented in an example file.
+These are documented in `frontend/.env.local.example`.
 
 ## Local Setup
 

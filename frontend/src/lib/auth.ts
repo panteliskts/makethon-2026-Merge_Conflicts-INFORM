@@ -73,22 +73,48 @@ providers.push(
     async authorize(credentials) {
       if (!credentials?.email || !credentials?.password) return null;
 
+      // 1. Check hardcoded / env demo users first (fast, no DB round-trip).
       const users = getUsers();
-      const user = users.find(
+      const demoUser = users.find(
         (u: { email: string }) =>
           u.email.toLowerCase() === credentials.email.toLowerCase(),
       );
-      if (!user) return null;
+      if (demoUser) {
+        const valid = await bcrypt.compare(credentials.password, demoUser.passwordHash);
+        if (!valid) return null;
+        return {
+          id: demoUser.id,
+          name: demoUser.name,
+          email: demoUser.email,
+          role: demoUser.role ?? getRoleForEmail(demoUser.email),
+        };
+      }
 
-      const valid = await bcrypt.compare(credentials.password, user.passwordHash);
-      if (!valid) return null;
+      // 2. Fall back to Supabase app_users table (real sign-ups).
+      try {
+        const { createAdminClient } = await import("@/utils/supabase/admin");
+        const supabase = createAdminClient();
+        if (!supabase) return null;
 
-      return {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role ?? getRoleForEmail(user.email),
-      };
+        const { data: row } = await supabase
+          .from("app_users")
+          .select("id, name, email, password_hash, role")
+          .eq("email", credentials.email.toLowerCase())
+          .maybeSingle();
+
+        if (!row) return null;
+        const valid = await bcrypt.compare(credentials.password, row.password_hash);
+        if (!valid) return null;
+
+        return {
+          id: row.id,
+          name: row.name,
+          email: row.email,
+          role: (row.role as UserRole) ?? getRoleForEmail(row.email),
+        };
+      } catch {
+        return null;
+      }
     },
   }),
 );
