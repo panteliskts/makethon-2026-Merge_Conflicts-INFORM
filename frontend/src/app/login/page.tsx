@@ -9,7 +9,7 @@ import { ThemeToggle, LangToggle } from "@/components/NavControls";
 import { upsertSavedAccount } from "@/components/AccountSwitcher";
 import { useLocale } from "@/lib/useLocale";
 
-type Mode = "options" | "credentials" | "signup" | "signup-role";
+type Mode = "options" | "credentials" | "forgot" | "forgot-sent" | "signup" | "signup-role";
 type AccountType = "client" | "admin";
 
 const ease = [0.16, 1, 0.3, 1] as const;
@@ -53,6 +53,9 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Forgot password state
+  const [forgotEmail, setForgotEmail] = useState("");
+
   // Signup-specific state
   const [signupName, setSignupName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
@@ -86,6 +89,7 @@ export default function LoginPage() {
           name: nextSession.user.name ?? email,
           role: nextSession.user.role ?? "client",
           image: nextSession.user.image ?? undefined,
+          password,
         });
       }
       router.push(routeForRole(nextSession?.user?.role));
@@ -138,6 +142,7 @@ export default function LoginPage() {
             name: nextSession.user.name ?? signupName,
             role: nextSession.user.role ?? signupRole,
             image: nextSession.user.image ?? undefined,
+            password: signupPassword,
           });
         }
         router.push(routeForRole(nextSession?.user?.role));
@@ -218,11 +223,16 @@ export default function LoginPage() {
               </div>
 
               <h1 className="text-xl font-bold text-center text-text-primary mb-1">
-                {mode === "signup" || mode === "signup-role" ? "Create an account" : L.title}
+                {mode === "signup" || mode === "signup-role" ? "Create an account" :
+                 mode === "forgot" ? "Forgot password?" :
+                 mode === "forgot-sent" ? "Check your email" :
+                 L.title}
               </h1>
               <p className="text-sm text-center text-text-secondary mb-6">
                 {mode === "signup" ? "Fill in your details to get started" :
                  mode === "signup-role" ? "What best describes you?" :
+                 mode === "forgot" ? "Enter your email and we'll send a reset link" :
+                 mode === "forgot-sent" ? `We sent a link to ${forgotEmail}` :
                  L.sub}
               </p>
 
@@ -322,12 +332,95 @@ export default function LoginPage() {
                         className="focus-ring text-xs text-text-secondary hover:text-text-primary transition-colors py-1">
                         {L.back}
                       </button>
-                      <button type="button" onClick={() => { setError(""); setMode("signup-role"); }}
-                        className="focus-ring text-xs text-accent hover:text-accent/80 transition-colors py-1">
-                        Sign up instead
-                      </button>
+                      <div className="flex gap-3">
+                        <button type="button" onClick={() => { setError(""); setForgotEmail(email); setMode("forgot"); }}
+                          className="focus-ring text-xs text-text-secondary hover:text-text-primary transition-colors py-1">
+                          Forgot password?
+                        </button>
+                        <button type="button" onClick={() => { setError(""); setMode("signup-role"); }}
+                          className="focus-ring text-xs text-accent hover:text-accent/80 transition-colors py-1">
+                          Sign up
+                        </button>
+                      </div>
                     </div>
                   </motion.form>
+                )}
+
+                {/* ── Forgot password ──────────────────────────── */}
+                {mode === "forgot" && (
+                  <motion.form key="forgot"
+                    initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.28, ease }}
+                    className="space-y-4"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setError("");
+                      setLoading(true);
+                      const res = await fetch("/api/auth/forgot-password", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ email: forgotEmail }),
+                      });
+                      setLoading(false);
+                      if (!res.ok) {
+                        const d = await res.json();
+                        setError(d.error || "Something went wrong.");
+                        return;
+                      }
+                      setMode("forgot-sent");
+                    }}>
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">Email address</label>
+                      <input type="email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)}
+                        required placeholder="you@example.com"
+                        className="focus-ring w-full rounded-md border border-card-border bg-sidebar px-4 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-muted focus:border-accent" />
+                    </div>
+                    <AnimatePresence>
+                      {error && (
+                        <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                          {error}
+                        </motion.p>
+                      )}
+                    </AnimatePresence>
+                    <motion.button type="submit" disabled={loading}
+                      whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.985 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                      className="pressable focus-ring flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-bold text-ink transition-colors hover:bg-accent-hover disabled:opacity-50">
+                      {loading ? (
+                        <motion.div animate={{ rotate: 360 }}
+                          transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                          className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white" />
+                      ) : "Send reset link"}
+                    </motion.button>
+                    <button type="button" onClick={() => { setMode("credentials"); setError(""); }}
+                      className="focus-ring w-full text-center text-xs text-text-secondary hover:text-text-primary transition-colors py-1">
+                      ← Back to sign in
+                    </button>
+                  </motion.form>
+                )}
+
+                {/* ── Forgot password sent ──────────────────────── */}
+                {mode === "forgot-sent" && (
+                  <motion.div key="forgot-sent"
+                    initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.3 }}
+                    className="text-center space-y-4">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-card-border bg-card">
+                      <svg className="h-7 w-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-text-secondary leading-relaxed">
+                      If <strong className="text-text-primary">{forgotEmail}</strong> is registered,
+                      you'll receive a reset link shortly. Check your spam folder too.
+                    </p>
+                    <button onClick={() => { setMode("credentials"); setError(""); }}
+                      className="pressable focus-ring w-full rounded-md border border-card-border px-4 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:border-accent/50 hover:text-text-primary">
+                      Back to sign in
+                    </button>
+                  </motion.div>
                 )}
 
                 {/* ── Account type selection ───────────────────── */}

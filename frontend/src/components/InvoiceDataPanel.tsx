@@ -1,10 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ingestFile } from "@/lib/api";
 
 const IMAGE_RE = /\.(jpe?g|png)(\?|$)/i;
+function isImageSource(url: string, filename: string) {
+  return IMAGE_RE.test(url) || /\.(jpe?g|png)$/i.test(filename);
+}
 const PDFJS_CDN =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs";
 
@@ -18,15 +21,14 @@ function PreviewModal({
   pdfUrl: string;
   onClose: () => void;
 }) {
-  const isImage = IMAGE_RE.test(pdfUrl);
+  const isImage = isImageSource(pdfUrl, sourceFile);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pdfReady, setPdfReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
 
-  // Render PDF page
-  async function renderPage(doc: any, pageNum: number) {
+  const renderPage = useCallback(async (doc: any, pageNum: number) => {
     const page = await doc.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.8 });
     const canvas = canvasRef.current;
@@ -40,10 +42,10 @@ function PreviewModal({
     ctx.scale(dpr, dpr);
     await page.render({ canvasContext: ctx, viewport }).promise;
     setPdfReady(true);
-  }
+  }, []);
 
   // Load PDF on mount
-  useState(() => {
+  useEffect(() => {
     if (isImage) return;
     let cancelled = false;
     (async () => {
@@ -58,7 +60,7 @@ function PreviewModal({
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
-  });
+  }, [pdfUrl, isImage, renderPage]);
 
   async function goToPage(num: number) {
     if (!pdfDoc || num < 1 || num > totalPages) return;
@@ -106,7 +108,7 @@ function PreviewModal({
           <img src={pdfUrl} alt={sourceFile}
             className="max-h-full max-w-full rounded-xl shadow-2xl object-contain" />
         ) : (
-          <div className="relative">
+          <div className="relative min-h-[60vh] min-w-[40vw]">
             {!pdfReady && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
@@ -211,7 +213,7 @@ export default function InvoiceDataPanel({
         {sources.length > 0 && (
           <div className="space-y-2">
             {sources.map((src, idx) => {
-              const isImage = IMAGE_RE.test(src.pdfUrl);
+              const isImage = isImageSource(src.pdfUrl, src.sourceFile);
               const ext = src.sourceFile.split(".").pop()?.toUpperCase() ?? "";
               const isActive = idx === activeIndex;
               return (

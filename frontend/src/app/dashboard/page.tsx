@@ -63,7 +63,9 @@ export default function Home() {
     for (const file of validFiles) {
       try {
         const result = await ingestFile(file);
-        newSources.push({ sourceFile: result.source_file, pdfUrl: result.preview_url });
+        // Use backend storage URL when available, else fall back to a local object URL
+        const pdfUrl = result.preview_url || URL.createObjectURL(file);
+        newSources.push({ sourceFile: result.source_file, pdfUrl });
       } catch (e: any) {
         setUploadError(e.message || `Failed to upload ${file.name}`);
       }

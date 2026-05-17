@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { createAdminClient } from "@/utils/supabase/admin";
+import { encryptPassword } from "@/lib/account-crypto";
 
 // GET /api/accounts — return saved accounts for the current user
 export async function GET() {
@@ -39,16 +40,18 @@ export async function POST(req: NextRequest) {
   const supabase = createAdminClient();
   if (!supabase) return NextResponse.json({ error: "DB not configured" }, { status: 503 });
 
-  await supabase.from("user_saved_accounts").upsert(
-    {
-      owner_email:  session.user.email,
-      linked_email: body.email,
-      linked_name:  body.name ?? body.email,
-      linked_role:  body.role ?? "client",
-      linked_image: body.image ?? null,
-    },
-    { onConflict: "owner_email,linked_email" },
-  );
+  const row: Record<string, unknown> = {
+    owner_email:  session.user.email,
+    linked_email: body.email,
+    linked_name:  body.name ?? body.email,
+    linked_role:  body.role ?? "client",
+    linked_image: body.image ?? null,
+  };
+  if (body.password) {
+    row.linked_password_enc = encryptPassword(body.password);
+  }
+
+  await supabase.from("user_saved_accounts").upsert(row, { onConflict: "owner_email,linked_email" });
 
   return NextResponse.json({ ok: true });
 }
