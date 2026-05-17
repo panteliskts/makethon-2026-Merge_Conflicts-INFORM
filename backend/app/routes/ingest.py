@@ -120,21 +120,23 @@ async def ingest(request: Request, file: UploadFile = File(...)):
                                  metadata={"source_file": filename})
                 # Non-fatal: continue without Storage URL
 
-        # ── Write temp file for parsing ───────────────────────────────────────
-        tmp_dir = Path(settings.upload_dir)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        dest = tmp_dir / filename
-        dest.write_bytes(file_bytes)
+        # ── Write temp file for parsing, delete immediately after ────────────
+        import tempfile, os as _os
+        tmp_suffix = Path(filename).suffix.lower()
+        with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
 
-        # ── Parse chunks (run blocking I/O in thread) ─────────────────────────
         try:
             chunks = await anyio.to_thread.run_sync(
-                lambda: extract_chunks(str(dest), filename)
+                lambda: extract_chunks(tmp_path, filename)
             )
         except Exception as exc:
             record_exception(request, "ingest", "File parsing failed", exc,
                              metadata={"source_file": filename})
             raise HTTPException(status_code=422, detail=str(exc))
+        finally:
+            _os.unlink(tmp_path)  # always delete, even on parse failure
 
         if not chunks:
             raise HTTPException(
@@ -185,17 +187,20 @@ async def ingest(request: Request, file: UploadFile = File(...)):
         }
 
     # ── Local fallback (no Supabase creds) ────────────────────────────────────
-    tmp_dir = Path(settings.upload_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    dest = tmp_dir / filename
-    dest.write_bytes(file_bytes)
+    import tempfile, os as _os
+    tmp_suffix = Path(filename).suffix.lower()
+    with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=False) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
 
     try:
         chunks = await anyio.to_thread.run_sync(
-            lambda: extract_chunks(str(dest), filename)
+            lambda: extract_chunks(tmp_path, filename)
         )
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    finally:
+        _os.unlink(tmp_path)
 
     if not chunks:
         raise HTTPException(status_code=422, detail="No text could be extracted")

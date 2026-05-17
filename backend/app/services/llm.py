@@ -70,10 +70,10 @@ _INJECTION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── Answer cache ───────────────────────────────────────────────────────────────
+# ── L1 in-memory cache (fast path) ────────────────────────────────────────────
 _answer_cache: dict[str, dict] = {}
 
-# ── Usage counters ─────────────────────────────────────────────────────────────
+# ── In-process usage counters (flushed to DB asynchronously) ──────────────────
 _usage: dict[str, int] = {
     "cache_hits": 0,
     "cache_misses": 0,
@@ -85,6 +85,16 @@ _usage: dict[str, int] = {
 
 def get_usage_stats() -> dict:
     return {**_usage, "cache_size": len(_answer_cache)}
+
+
+def _fire(coro) -> None:
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(coro)
+    except RuntimeError:
+        pass
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -226,6 +236,7 @@ class LLMService:
                 )
             except RateLimitError:
                 _usage["rate_limit_hits"] += 1
+                _fire(self._flush_stat("rate_limit_hits", 1))
                 if attempt == 3:
                     raise
                 time.sleep(delay)
@@ -233,8 +244,21 @@ class LLMService:
 
     def _track_tokens(self, response) -> None:
         if response and response.usage:
-            _usage["total_input_tokens"] += response.usage.prompt_tokens or 0
-            _usage["total_output_tokens"] += response.usage.completion_tokens or 0
+            inp = response.usage.prompt_tokens or 0
+            out = response.usage.completion_tokens or 0
+            _usage["total_input_tokens"] += inp
+            _usage["total_output_tokens"] += out
+            if inp or out:
+                _fire(self._flush_stat("total_input_tokens", inp))
+                _fire(self._flush_stat("total_output_tokens", out))
+
+    @staticmethod
+    async def _flush_stat(key: str, amount: int) -> None:
+        try:
+            from . import database as db
+            await db.increment_stats(db.get_pool(), **{key: amount})
+        except Exception:
+            pass
 
     def rerank(self, query: str, chunks: list[dict], top_k: int) -> list[dict]:
         """
@@ -266,18 +290,34 @@ class LLMService:
             pass
         return chunks[:top_k]
 
-    def generate_answer(
+    async def generate_answer(
         self,
         query: str,
         context_chunks: list[dict],
         source_file: str | None = None,
     ) -> dict:
+        from . import database as db
+        pool = db.get_pool()
+
         key = _cache_key(query, source_file, len(context_chunks))
+
+        # L1: in-memory
         if key in _answer_cache:
             _usage["cache_hits"] += 1
+            _fire(self._flush_stat("cache_hits", 1))
             return {**_answer_cache[key], "cached": True}
 
+        # L2: Supabase
+        cached = await db.get_llm_cache(pool, key)
+        if cached:
+            _answer_cache[key] = cached
+            _usage["cache_hits"] += 1
+            _fire(self._flush_stat("cache_hits", 1))
+            return {**cached, "cached": True}
+
         _usage["cache_misses"] += 1
+        _fire(self._flush_stat("cache_misses", 1))
+
         context = _build_context(context_chunks)
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -290,34 +330,46 @@ class LLMService:
         parsed = _parse_llm_response(raw)
         answer = parsed.get("answer") or _REFUSAL
         refused = _REFUSAL in answer
-        citations = [] if refused else _validate_citations(
-            parsed.get("sources", []), context_chunks
-        )
+        citations = [] if refused else _validate_citations(parsed.get("sources", []), context_chunks)
 
         result = {"answer": answer, "refused": refused, "citations": citations}
         _answer_cache[key] = result
+        _fire(db.set_llm_cache(pool, key, answer, refused, citations))
         return {**result, "cached": False}
 
-    def generate_chat_answer(
+    async def generate_chat_answer(
         self,
         messages: list[dict],
         context_chunks: list[dict],
         source_file: str | None = None,
     ) -> dict:
+        from . import database as db
+        pool = db.get_pool()
+
         user_messages = [m for m in messages if m["role"] == "user"]
         latest_query = user_messages[-1]["content"] if user_messages else ""
 
         key = _cache_key(latest_query, source_file, len(context_chunks))
+
+        # L1: in-memory
         if key in _answer_cache:
             _usage["cache_hits"] += 1
+            _fire(self._flush_stat("cache_hits", 1))
             return {**_answer_cache[key], "cached": True}
 
+        # L2: Supabase
+        cached = await db.get_llm_cache(pool, key)
+        if cached:
+            _answer_cache[key] = cached
+            _usage["cache_hits"] += 1
+            _fire(self._flush_stat("cache_hits", 1))
+            return {**cached, "cached": True}
+
         _usage["cache_misses"] += 1
+        _fire(self._flush_stat("cache_misses", 1))
+
         context = _build_context(context_chunks)
-
-        # Include trimmed history for conversational flow (excludes latest user msg).
         history = _trim_history(messages[:-1]) if len(messages) > 1 else []
-
         call_messages = [
             {"role": "system", "content": f"{_SYSTEM_PROMPT}\n\n{context}"},
             *history,
@@ -330,10 +382,9 @@ class LLMService:
         parsed = _parse_llm_response(raw)
         answer = parsed.get("answer") or _REFUSAL
         refused = _REFUSAL in answer
-        citations = [] if refused else _validate_citations(
-            parsed.get("sources", []), context_chunks
-        )
+        citations = [] if refused else _validate_citations(parsed.get("sources", []), context_chunks)
 
         result = {"answer": answer, "refused": refused, "citations": citations}
         _answer_cache[key] = result
+        _fire(db.set_llm_cache(pool, key, answer, refused, citations))
         return {**result, "cached": False}

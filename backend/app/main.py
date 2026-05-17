@@ -1,13 +1,12 @@
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .services import database as db
+from .services import telemetry
 from .routes import admin, ingest, query, chat, reconcile, metrics
 
 logging.basicConfig(level=logging.INFO)
@@ -17,17 +16,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
-    # Temp upload dir (used for parsing before upload to Supabase Storage)
-    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-
-    # Postgres connection pool
-    if settings.supabase_db_url:
-        await db.init_pool()
-    else:
-        logger.warning(
-            "SUPABASE_DB_URL not set — running in local-only mode (no persistence)"
-        )
-
+    await db.init_pool()
+    # Hydrate in-memory telemetry from Supabase so admin console survives restarts
+    await telemetry.load_from_db()
     logger.info("INFORM Invoice Intelligence API ready")
     yield
 
@@ -67,10 +58,3 @@ async def health():
         "status": "ok",
         "db": "connected" if db.db_available() else "unavailable",
     }
-
-
-# Serve locally-written temp files in dev / local-only mode.
-# In production these are served from Supabase Storage via signed URLs.
-_uploads_path = Path(settings.upload_dir)
-_uploads_path.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(_uploads_path)), name="uploads")

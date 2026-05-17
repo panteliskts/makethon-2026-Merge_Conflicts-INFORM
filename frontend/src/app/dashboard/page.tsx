@@ -7,6 +7,7 @@ import InvoiceDataPanel, { type UploadedSource } from "@/components/InvoiceDataP
 import ChatPanel from "@/components/ChatPanel";
 import ReconcilePanel from "@/components/ReconcilePanel";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
+import AccountSwitcher, { upsertSavedAccount } from "@/components/AccountSwitcher";
 import { useLocale } from "@/lib/useLocale";
 
 type Tab = "chat" | "reconcile";
@@ -31,12 +32,15 @@ export default function Home() {
   const role = session?.user?.role ?? "client";
 
   useEffect(() => {
-    setDiagnosticsIdentity({
-      email: session?.user?.email,
-      name: session?.user?.name,
+    if (!session?.user?.email) return;
+    setDiagnosticsIdentity({ email: session.user.email, name: session.user.name, role });
+    upsertSavedAccount({
+      email: session.user.email,
+      name: session.user.name ?? session.user.email,
       role,
+      image: session.user.image ?? undefined,
     });
-  }, [session?.user?.email, session?.user?.name, role]);
+  }, [session?.user?.email, session?.user?.name, role, session?.user?.image]);
 
   const activeSource = sources[activeIndex] ?? null;
 
@@ -120,20 +124,17 @@ export default function Home() {
               Admin
             </a>
           )}
-          {session?.user?.image && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={session.user.image} alt="avatar" className="h-8 w-8 rounded-md" />
+          {session?.user && (
+            <AccountSwitcher
+              current={{
+                email: session.user.email ?? "",
+                name: session.user.name ?? session.user.email ?? "",
+                role,
+                image: session.user.image ?? undefined,
+              }}
+              onSignOut={() => { clearDiagnosticsIdentity(); signOut({ callbackUrl: "/" }); }}
+            />
           )}
-          {session?.user?.name && (
-            <span className="hidden max-w-[9rem] truncate text-xs text-text-secondary lg:block">
-              {session.user.name}
-            </span>
-          )}
-          <button
-            onClick={() => { clearDiagnosticsIdentity(); signOut({ callbackUrl: "/" }); }}
-            className="pressable focus-ring rounded-md border border-card-border px-3 py-2 text-xs font-semibold text-text-secondary hover:border-accent/60 hover:text-text-primary">
-            {t.nav.signout}
-          </button>
         </div>
       </header>
 

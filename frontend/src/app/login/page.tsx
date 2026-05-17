@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
+import { upsertSavedAccount } from "@/components/AccountSwitcher";
 import { useLocale } from "@/lib/useLocale";
 
 type Mode = "options" | "credentials" | "signup" | "signup-role";
@@ -79,6 +80,14 @@ export default function LoginPage() {
       setError(L.errorMsg);
     } else {
       const nextSession = await getSession();
+      if (nextSession?.user) {
+        upsertSavedAccount({
+          email: nextSession.user.email ?? email,
+          name: nextSession.user.name ?? email,
+          role: nextSession.user.role ?? "client",
+          image: nextSession.user.image ?? undefined,
+        });
+      }
       router.push(routeForRole(nextSession?.user?.role));
     }
   }
@@ -123,6 +132,14 @@ export default function LoginPage() {
         setEmail(signupEmail);
       } else {
         const nextSession = await getSession();
+        if (nextSession?.user) {
+          upsertSavedAccount({
+            email: nextSession.user.email ?? signupEmail,
+            name: nextSession.user.name ?? signupName,
+            role: nextSession.user.role ?? signupRole,
+            image: nextSession.user.image ?? undefined,
+          });
+        }
         router.push(routeForRole(nextSession?.user?.role));
       }
     } catch {
