@@ -317,3 +317,175 @@ async def save_message(
         "cached":      cached,
         "latency_ms":  latency_ms,
     }).execute()
+
+
+# ── Session telemetry helpers ─────────────────────────────────────────────────
+
+async def upsert_session(pool: asyncpg.Pool | None, session: dict) -> None:
+    row = {
+        "id":            session["id"],
+        "user_email":    session["user_email"],
+        "user_name":     session["user_name"],
+        "role":          session["role"],
+        "path":          session.get("path"),
+        "user_agent":    session.get("user_agent"),
+        "active_source": session.get("active_source"),
+        "last_seen":     session["last_seen"],
+        "request_count": session["request_count"],
+        "error_count":   session["error_count"],
+    }
+    if pool is not None:
+        await pool.execute(
+            """
+            INSERT INTO sessions
+              (id, user_email, user_name, role, path, user_agent,
+               active_source, last_seen, request_count, error_count)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            ON CONFLICT (id) DO UPDATE SET
+              user_email    = EXCLUDED.user_email,
+              user_name     = EXCLUDED.user_name,
+              role          = EXCLUDED.role,
+              path          = EXCLUDED.path,
+              user_agent    = EXCLUDED.user_agent,
+              active_source = EXCLUDED.active_source,
+              last_seen     = EXCLUDED.last_seen,
+              request_count = EXCLUDED.request_count,
+              error_count   = EXCLUDED.error_count
+            """,
+            row["id"], row["user_email"], row["user_name"], row["role"],
+            row["path"], row["user_agent"], row["active_source"],
+            row["last_seen"], row["request_count"], row["error_count"],
+        )
+        return
+    if _sb:
+        await _sb.table("sessions").upsert(row, on_conflict="id").execute()
+
+
+async def insert_session_event(pool: asyncpg.Pool | None, event: dict, session_id: str) -> None:
+    row = {
+        "id":         event["id"],
+        "session_id": session_id,
+        "event_type": event["type"],
+        "status":     event["status"],
+        "message":    event["message"],
+        "metadata":   event.get("metadata", {}),
+    }
+    if pool is not None:
+        await pool.execute(
+            """
+            INSERT INTO session_events (id, session_id, event_type, status, message, metadata)
+            VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            row["id"], row["session_id"], row["event_type"],
+            row["status"], row["message"], __import__("json").dumps(row["metadata"]),
+        )
+        return
+    if _sb:
+        await _sb.table("session_events").upsert(row, on_conflict="id").execute()
+
+
+async def load_sessions(pool: asyncpg.Pool | None) -> list[dict]:
+    """Load recent sessions + their latest events from DB on startup."""
+    if pool is not None:
+        rows = await pool.fetch(
+            "SELECT * FROM sessions ORDER BY last_seen DESC LIMIT 200"
+        )
+        sessions = [dict(r) for r in rows]
+        for s in sessions:
+            ev_rows = await pool.fetch(
+                "SELECT * FROM session_events WHERE session_id=$1 ORDER BY created_at DESC LIMIT 80",
+                s["id"],
+            )
+            s["events"] = [
+                {"id": r["id"], "timestamp": r["created_at"].isoformat(),
+                 "type": r["event_type"], "status": r["status"],
+                 "message": r["message"], "metadata": dict(r["metadata"])}
+                for r in ev_rows
+            ]
+        return sessions
+    if _sb:
+        res = await _sb.table("sessions").select("*").order("last_seen", desc=True).limit(200).execute()
+        sessions = list(res.data or [])
+        for s in sessions:
+            ev_res = (
+                await _sb.table("session_events")
+                .select("*")
+                .eq("session_id", s["id"])
+                .order("created_at", desc=True)
+                .limit(80)
+                .execute()
+            )
+            s["events"] = [
+                {"id": r["id"], "timestamp": r["created_at"],
+                 "type": r["event_type"], "status": r["status"],
+                 "message": r["message"], "metadata": r.get("metadata", {})}
+                for r in (ev_res.data or [])
+            ]
+        return sessions
+    return []
+
+
+# ── LLM cache helpers ─────────────────────────────────────────────────────────
+
+async def get_llm_cache(pool: asyncpg.Pool | None, key: str) -> dict | None:
+    if pool is not None:
+        row = await pool.fetchrow(
+            "SELECT answer, refused, citations FROM llm_cache WHERE cache_key=$1", key
+        )
+        if row:
+            await pool.execute(
+                "UPDATE llm_cache SET last_used=now() WHERE cache_key=$1", key
+            )
+            return {"answer": row["answer"], "refused": row["refused"],
+                    "citations": list(row["citations"])}
+        return None
+    if _sb:
+        res = await _sb.table("llm_cache").select("answer,refused,citations").eq("cache_key", key).maybeSingle().execute()
+        if res.data:
+            await _sb.table("llm_cache").update({"last_used": "now()"}).eq("cache_key", key).execute()
+            return res.data
+    return None
+
+
+async def set_llm_cache(pool: asyncpg.Pool | None, key: str, answer: str, refused: bool, citations: list) -> None:
+    if pool is not None:
+        await pool.execute(
+            """
+            INSERT INTO llm_cache (cache_key, answer, refused, citations)
+            VALUES ($1,$2,$3,$4::jsonb)
+            ON CONFLICT (cache_key) DO UPDATE SET
+              answer=EXCLUDED.answer, refused=EXCLUDED.refused,
+              citations=EXCLUDED.citations, last_used=now()
+            """,
+            key, answer, refused, __import__("json").dumps(citations),
+        )
+        return
+    if _sb:
+        await _sb.table("llm_cache").upsert(
+            {"cache_key": key, "answer": answer, "refused": refused, "citations": citations},
+            on_conflict="cache_key",
+        ).execute()
+
+
+# ── Usage stat helpers ────────────────────────────────────────────────────────
+
+async def increment_stats(pool: asyncpg.Pool | None, **counters: int) -> None:
+    """Atomically increment one or more usage_stats rows."""
+    for key, amount in counters.items():
+        if amount == 0:
+            continue
+        if pool is not None:
+            await pool.execute("SELECT public.increment_stat($1,$2)", key, amount)
+        elif _sb:
+            await _sb.rpc("increment_stat", {"p_key": key, "p_amount": amount}).execute()
+
+
+async def get_usage_stats_from_db(pool: asyncpg.Pool | None) -> dict:
+    if pool is not None:
+        rows = await pool.fetch("SELECT stat_key, value FROM public.usage_stats")
+        return {r["stat_key"]: int(r["value"]) for r in rows}
+    if _sb:
+        res = await _sb.table("usage_stats").select("stat_key,value").execute()
+        return {r["stat_key"]: int(r["value"]) for r in (res.data or [])}
+    return {}

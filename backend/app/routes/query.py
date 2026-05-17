@@ -109,7 +109,7 @@ async def query_endpoint(req: QueryRequest, request: Request):
         else:
             chunks = []
 
-        result = _get_llm().generate_answer(
+        result = await _get_llm().generate_answer(
             req.query, chunks, source_file=req.source_file
         )
         answer = result["answer"]
