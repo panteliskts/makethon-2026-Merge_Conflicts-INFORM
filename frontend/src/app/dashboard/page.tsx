@@ -119,7 +119,7 @@ export default function Home() {
             </svg>
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-text-primary">INFORM</p>
+            <p className="font-semibold text-text-primary">Invo.ai</p>
             <p className="hidden text-xs text-text-secondary sm:block">{t.dashboard.tagline}</p>
           </div>
         </div>

@@ -76,7 +76,7 @@ export default function AdminDashboard() {
     {
       id: "boot",
       tone: "output",
-      text: "INFORM admin console ready. Select a client session and run a diagnostic command.",
+      text: "Invo.ai admin console ready. Select a client session and run a diagnostic command.",
     },
   ]);
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -243,7 +243,7 @@ export default function AdminDashboard() {
             </svg>
           </div>
           <div className="min-w-0">
-            <p className="font-semibold tracking-tight text-text-primary">INFORM Admin</p>
+            <p className="font-semibold tracking-tight text-text-primary">Invo.ai Admin</p>
             <p className="text-xs text-text-secondary">Technical session overseer</p>
           </div>
         </div>

@@ -68,7 +68,7 @@ export function WaitlistForm() {
           Be first in line.
         </h2>
         <p className="mb-2 text-sm" style={{ color: "#e2e2ea" }}>
-          Join the INFORM waitlist and get early access when we launch.
+          Join the Invo.ai waitlist and get early access when we launch.
         </p>
       </div>
       <input

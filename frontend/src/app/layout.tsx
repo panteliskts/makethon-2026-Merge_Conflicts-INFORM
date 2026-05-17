@@ -5,10 +5,10 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 
 export const metadata: Metadata = {
-  title: "INFORM — Invoice Intelligence",
+  title: "Invo.ai — Invoice Intelligence",
   description: "Invoice intelligence with grounded answers, source highlights, and bank reconciliation.",
   openGraph: {
-    title: "INFORM — Invoice Intelligence",
+    title: "Invo.ai — Invoice Intelligence",
     description: "Ask invoices questions, inspect the evidence, and reconcile payments from one workspace.",
     type: "website",
   },
