@@ -2,6 +2,20 @@
 
 AI-powered invoice analysis with RAG, bounding box highlighting, bank reconciliation, and an admin diagnostics console for pitch demos.
 
+## Prerequisites
+
+This repo ships a custom-trained LayoutLMv3 model (~500 MB) via **Git LFS**.
+**Install Git LFS before cloning**, or you will get a tiny pointer file instead
+of the real model and inference will fail:
+
+```bash
+# macOS: brew install git-lfs   |   Debian/Ubuntu: sudo apt install git-lfs
+git lfs install
+git clone git@github.com:panteliskts/makethon-2026-Merge_Conflicts-INFORM.git
+```
+
+Already cloned without LFS? Run `git lfs install && git lfs pull` inside the repo.
+
 ## Quick Start
 
 ### One-command local start

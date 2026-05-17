@@ -155,11 +155,18 @@ fi
 
 BACKEND_URL="http://${BACKEND_URL_HOST}:${BACKEND_PORT}"
 FRONTEND_URL="http://${FRONTEND_URL_HOST}:${FRONTEND_PORT}"
+# Public URL the app is reached at. Defaults to the LAN URL, but set
+# PUBLIC_URL (e.g. https://site.panos.cloud) when serving through a tunnel
+# or reverse proxy so NextAuth builds correct callback/cookie URLs.
+PUBLIC_URL="${PUBLIC_URL:-$FRONTEND_URL}"
 # Allow CORS from the LAN URL, plus localhost and 127.0.0.1 (any local browser tab).
 FRONTEND_CORS_ORIGINS="${FRONTEND_URL},http://localhost:${FRONTEND_PORT},http://127.0.0.1:${FRONTEND_PORT}"
 LAN_IP="$(primary_lan_ip || true)"
 if [ -n "$LAN_IP" ] && [ "$LAN_IP" != "$FRONTEND_URL_HOST" ]; then
   FRONTEND_CORS_ORIGINS="${FRONTEND_CORS_ORIGINS},http://${LAN_IP}:${FRONTEND_PORT}"
+fi
+if [ "$PUBLIC_URL" != "$FRONTEND_URL" ]; then
+  FRONTEND_CORS_ORIGINS="${FRONTEND_CORS_ORIGINS},${PUBLIC_URL}"
 fi
 
 # Backend
@@ -199,7 +206,13 @@ fi
 
 rm -rf .next 2>/dev/null || true
 
-NEXTAUTH_URL="$FRONTEND_URL" NEXT_PUBLIC_API_BASE_URL="$BACKEND_URL" \
+# NEXT_PUBLIC_API_BASE_URL=/backend keeps API calls same-origin so they work
+# whether the app is reached on the LAN IP or through a Cloudflare tunnel.
+# Next.js rewrites /backend/* to BACKEND_INTERNAL_URL server-side (see
+# next.config.js), so the backend host is never baked into the browser bundle.
+NEXTAUTH_URL="$PUBLIC_URL" \
+  NEXT_PUBLIC_API_BASE_URL="/backend" \
+  BACKEND_INTERNAL_URL="http://127.0.0.1:${BACKEND_PORT}" \
   npm run dev -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
   | { grep -Ev "^\s*$|○ Compiling|✓ Compiled|✓ Starting|✓ Ready|▲ Next|- Local|- Network|- Environments" || true; } &
 FRONTEND_PID=$!
@@ -207,6 +220,9 @@ FRONTEND_PID=$!
 echo ""
 echo "  Backend  -> $BACKEND_URL (listening on ${BACKEND_HOST}:${BACKEND_PORT})"
 echo "  Frontend -> $FRONTEND_URL (listening on ${FRONTEND_HOST}:${FRONTEND_PORT})"
+if [ "$PUBLIC_URL" != "$FRONTEND_URL" ]; then
+  echo "  Public   -> $PUBLIC_URL (NextAuth callback URL)"
+fi
 echo ""
 echo "Press Ctrl+C to stop both servers."
 
