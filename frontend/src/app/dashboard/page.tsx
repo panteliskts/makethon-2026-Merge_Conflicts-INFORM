@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { clearDiagnosticsIdentity, setDiagnosticsIdentity, ingestFile } from "@/lib/api";
-import InvoiceDataPanel, { type UploadedSource } from "@/components/InvoiceDataPanel";
+import InvoiceDataPanel, { PreviewModal, type UploadedSource } from "@/components/InvoiceDataPanel";
+import type { ChunkResult } from "@/lib/api";
 import ChatPanel from "@/components/ChatPanel";
 import ReconcilePanel from "@/components/ReconcilePanel";
 import { ThemeToggle, LangToggle } from "@/components/NavControls";
@@ -25,6 +26,23 @@ export default function Home() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Shared preview + highlight state: ChatPanel source-chip clicks open the
+  // preview modal with the relevant bbox drawn on top.
+  const [previewSource, setPreviewSource] = useState<UploadedSource | null>(null);
+  const [highlightedChunks, setHighlightedChunks] = useState<ChunkResult[]>([]);
+
+  // Clicking a source chip is an explicit user action: stage the highlight
+  // AND open the preview modal pointed at the matching source. Answer-arrival
+  // doesn't auto-open the modal (that's handled by ChatPanel passing an empty
+  // array when chunks is the auto-highlight on send).
+  function handleHighlight(chunks: ChunkResult[]) {
+    setHighlightedChunks(chunks);
+    if (chunks.length === 0) return;
+    const target = chunks[0].bbox.source_file;
+    const src = sources.find((s) => s.sourceFile === target);
+    if (src) setPreviewSource(src);
+  }
 
   // Shared file input ref lives here so both ChatPanel and InvoiceDataPanel can use it
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -153,6 +171,7 @@ export default function Home() {
                 uploading={uploading}
                 uploadError={uploadError}
                 onFilesSelected={handleFilesSelected}
+                onRequestPreview={(src) => { setHighlightedChunks([]); setPreviewSource(src); }}
               />
             </div>
 
@@ -160,12 +179,22 @@ export default function Home() {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <ChatPanel
                 sourceFile={activeSource?.sourceFile ?? null}
-                onChunksHighlight={() => {}}
+                onChunksHighlight={handleHighlight}
                 onAttachClick={() => fileInputRef.current?.click()}
                 onFileDrop={handleFilesSelected}
               />
             </div>
           </div>
+        )}
+
+        {/* Shared preview modal — opened by either pane */}
+        {previewSource && (
+          <PreviewModal
+            sourceFile={previewSource.sourceFile}
+            pdfUrl={previewSource.pdfUrl}
+            highlightedChunks={highlightedChunks}
+            onClose={() => { setPreviewSource(null); setHighlightedChunks([]); }}
+          />
         )}
 
         {activeTab === "reconcile" && (

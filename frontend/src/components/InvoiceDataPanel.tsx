@@ -1,34 +1,86 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ingestFile } from "@/lib/api";
+import { ingestFile, type ChunkResult } from "@/lib/api";
 
 const IMAGE_RE = /\.(jpe?g|png)(\?|$)/i;
 const PDFJS_CDN =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs";
 
+/* ── Verification palette (shared with chat / overlay canvas) ───── */
+const VERIFY_STYLE: Record<string, { fill: string; stroke: string; prefix: string }> = {
+  verified:    { fill: "rgba(16, 185, 129, 0.30)", stroke: "#10b981", prefix: "✓✓" },
+  model_only:  { fill: "rgba(56, 189, 130, 0.22)", stroke: "#38bd82", prefix: "✓" },
+  gemini_only: { fill: "rgba(59, 130, 246, 0.22)", stroke: "#3b82f6", prefix: "~" },
+  disputed:    { fill: "rgba(245, 158, 11, 0.28)", stroke: "#f59e0b", prefix: "⚠" },
+};
+
+function drawOverlay(
+  ctx: CanvasRenderingContext2D,
+  chunks: ChunkResult[],
+  scale: number,
+  width: number,
+  height: number,
+  pageNum: number,
+) {
+  ctx.clearRect(0, 0, width, height);
+  for (const chunk of chunks) {
+    if ((chunk.bbox.page_num ?? 0) !== pageNum) continue;
+    const { x0, y0, x1, y1 } = chunk.bbox;
+    if (x1 - x0 <= 0 || y1 - y0 <= 0) continue;
+
+    const sx = x0 * scale;
+    const sy = y0 * scale;
+    const sw = (x1 - x0) * scale;
+    const sh = (y1 - y0) * scale;
+
+    const v = chunk.verification ?? (chunk.source_type === "extracted" ? "model_only" : undefined);
+    const style = (v && VERIFY_STYLE[v]) || { fill: "rgba(233, 106, 61, 0.22)", stroke: "#e96a3d", prefix: "" };
+
+    ctx.fillStyle = style.fill;
+    ctx.fillRect(sx, sy, sw, sh);
+    ctx.strokeStyle = style.stroke;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(sx, sy, sw, sh);
+
+    ctx.fillStyle = style.stroke;
+    ctx.font = "bold 11px system-ui, sans-serif";
+    const conf = chunk.confidence != null ? ` · ${(chunk.confidence * 100).toFixed(0)}%` : "";
+    const label = `${style.prefix} ${chunk.bbox.chunk_type}${conf}`.trim();
+    ctx.fillText(label, sx + 4, sy - 4);
+  }
+}
+
 /* ── Fullscreen preview modal ─────────────────────────────────── */
-function PreviewModal({
+export function PreviewModal({
   sourceFile,
   pdfUrl,
+  highlightedChunks = [],
   onClose,
 }: {
   sourceFile: string;
   pdfUrl: string;
+  highlightedChunks?: ChunkResult[];
   onClose: () => void;
 }) {
   const isImage = IMAGE_RE.test(pdfUrl);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [pdfReady, setPdfReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
+  // PDF viewport scale we rendered at (excluding DPR), used so overlay coords line up.
+  const pdfScaleRef = useRef(1);
 
-  // Render PDF page
+  // Render PDF page + redraw overlay
   async function renderPage(doc: any, pageNum: number) {
     const page = await doc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1.8 });
+    const scale = 1.8;
+    pdfScaleRef.current = scale;
+    const viewport = page.getViewport({ scale });
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
@@ -39,6 +91,17 @@ function PreviewModal({
     const ctx = canvas.getContext("2d")!;
     ctx.scale(dpr, dpr);
     await page.render({ canvasContext: ctx, viewport }).promise;
+
+    // Size + paint the overlay canvas to match (CSS pixels, no DPR scale).
+    const overlay = overlayRef.current;
+    if (overlay) {
+      overlay.width = viewport.width;
+      overlay.height = viewport.height;
+      overlay.style.width = `${viewport.width}px`;
+      overlay.style.height = `${viewport.height}px`;
+      const octx = overlay.getContext("2d");
+      if (octx) drawOverlay(octx, highlightedChunks, scale, overlay.width, overlay.height, pageNum - 1);
+    }
     setPdfReady(true);
   }
 
@@ -66,6 +129,32 @@ function PreviewModal({
     setPdfReady(false);
     await renderPage(pdfDoc, num);
   }
+
+  // Redraw the overlay when highlights change (without re-rendering the PDF
+  // page or the image). For images we also re-sync the canvas dimensions to
+  // the rendered image's box.
+  useEffect(() => {
+    if (isImage) {
+      const img = imgRef.current;
+      const overlay = overlayRef.current;
+      if (!img || !overlay || !img.naturalWidth || !img.clientWidth) return;
+      const scale = img.clientWidth / img.naturalWidth;
+      overlay.width = img.clientWidth;
+      overlay.height = img.clientHeight;
+      overlay.style.width = `${img.clientWidth}px`;
+      overlay.style.height = `${img.clientHeight}px`;
+      const ctx = overlay.getContext("2d");
+      if (ctx) drawOverlay(ctx, highlightedChunks, scale, overlay.width, overlay.height, 0);
+      return;
+    }
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const ctx = overlay.getContext("2d");
+    if (ctx) {
+      drawOverlay(ctx, highlightedChunks, pdfScaleRef.current,
+                  overlay.width, overlay.height, currentPage - 1);
+    }
+  }, [highlightedChunks, currentPage, isImage]);
 
   const modal = (
     <div
@@ -102,17 +191,38 @@ function PreviewModal({
       {/* Content */}
       <div className="flex-1 overflow-auto p-6 flex items-start justify-center">
         {isImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={pdfUrl} alt={sourceFile}
-            className="max-h-full max-w-full rounded-xl shadow-2xl object-contain" />
+          <div className="relative inline-block">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              ref={imgRef}
+              src={pdfUrl}
+              alt={sourceFile}
+              onLoad={(e) => {
+                // Trigger initial overlay paint once image dimensions are known.
+                const img = e.currentTarget;
+                const overlay = overlayRef.current;
+                if (!overlay || !img.naturalWidth) return;
+                const scale = img.clientWidth / img.naturalWidth;
+                overlay.width = img.clientWidth;
+                overlay.height = img.clientHeight;
+                overlay.style.width = `${img.clientWidth}px`;
+                overlay.style.height = `${img.clientHeight}px`;
+                const ctx = overlay.getContext("2d");
+                if (ctx) drawOverlay(ctx, highlightedChunks, scale, overlay.width, overlay.height, 0);
+              }}
+              className="max-h-full max-w-full rounded-xl shadow-2xl object-contain block"
+            />
+            <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
+          </div>
         ) : (
-          <div className="relative">
+          <div className="relative inline-block">
             {!pdfReady && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
               </div>
             )}
-            <canvas ref={canvasRef} className="rounded-xl shadow-2xl" />
+            <canvas ref={canvasRef} className="rounded-xl shadow-2xl block" />
+            <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
           </div>
         )}
       </div>
@@ -136,6 +246,7 @@ interface Props {
   uploading: boolean;
   uploadError: string | null;
   onFilesSelected: (files: FileList) => void;
+  onRequestPreview?: (src: UploadedSource) => void;
 }
 
 export default function InvoiceDataPanel({
@@ -146,8 +257,13 @@ export default function InvoiceDataPanel({
   uploading,
   uploadError,
   onFilesSelected,
+  onRequestPreview,
 }: Props) {
   const [previewSource, setPreviewSource] = useState<UploadedSource | null>(null);
+  const openPreview = (src: UploadedSource) => {
+    if (onRequestPreview) onRequestPreview(src);
+    else setPreviewSource(src);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -247,7 +363,7 @@ export default function InvoiceDataPanel({
 
                   {/* Fullscreen preview button */}
                   <button
-                    onClick={() => setPreviewSource(src)}
+                    onClick={() => openPreview(src)}
                     title="Preview fullscreen"
                     className="pressable focus-ring shrink-0 rounded-lg border border-card-border bg-sidebar p-2 text-text-secondary opacity-0 transition group-hover:opacity-100 hover:border-accent/50 hover:text-accent">
                     <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

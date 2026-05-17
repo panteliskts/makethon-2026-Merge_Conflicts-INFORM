@@ -17,6 +17,9 @@ class ChunkResult(BaseModel):
     bbox: BoundingBox
     score: float
     chunk_index: int
+    # Short stable id the LLM cites in answer text — same shape as
+    # llm._chunk_id() so the frontend can filter sources to actual citations.
+    cite_id: str = ""
     source_type: str = "ocr_block"
     confidence: float = 1.0
     entity: str = ""

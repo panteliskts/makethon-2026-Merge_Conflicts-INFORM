@@ -12,7 +12,12 @@ class Settings(BaseSettings):
 
     # Retrieval & generation
     max_tokens: int = 512
-    top_k: int = 3
+    # top_k = chunks passed to the LLM as context. RAG still ranks by hybrid
+    # vector+FTS+RRF; we just keep a wider window of candidates so the
+    # citation layer (not the retriever) decides what's relevant. 10 chunks
+    # ≈ 1.5K extra prompt tokens — cheap, prevents the "right answer was at
+    # rank 4 so we threw it away" failure mode.
+    top_k: int = 10
     top_k_retrieve: int = 20          # pre-rerank candidate pool size
     score_threshold: float = 0.35     # min vector_score to consider an answer grounded
     reranker_enabled: bool = False    # LLM reranker costs one extra API call per query
@@ -42,5 +47,9 @@ class Settings(BaseSettings):
     # model's structured fields. Best-effort: failures fall back to model-only.
     cross_validate_ingest: bool = True
     cross_validate_fuzzy_threshold: float = 0.80
+    # If the model returns at least this many high-confidence fields on a
+    # page, skip the cross-validation Gemini call (it's not adding signal).
+    # Set to 99 to force every page to be cross-validated.
+    cross_validate_min_model_fields_to_skip: int = 4
 
 settings = Settings()

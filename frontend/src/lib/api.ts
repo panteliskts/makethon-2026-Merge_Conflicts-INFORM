@@ -123,6 +123,7 @@ export interface ChunkResult {
   bbox: BoundingBox;
   score: number;
   chunk_index: number;
+  cite_id?: string;
   source_type?: "extracted" | "ocr_block";
   confidence?: number;
   entity?: string;
@@ -130,6 +131,11 @@ export interface ChunkResult {
   agreement?: number;
   model_value?: string;
   gemini_value?: string;
+}
+
+export interface Citation {
+  chunk_id: string;
+  quote: string;
 }
 
 export interface IngestResponse {
@@ -158,6 +164,8 @@ export interface ChatResponse {
   chunks: ChunkResult[];
   grounded: boolean;
   refused: boolean;
+  citations?: Citation[];
+  failure_mode?: string | null;
 }
 
 export interface QueryResponse {

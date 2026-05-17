@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState, useEffect, KeyboardEvent, DragEvent } from "react";
-import { sendChat, getUsage, type ChatMessage, type ChunkResult, type UsageResponse } from "@/lib/api";
+import { sendChat, getUsage, type ChatMessage, type ChunkResult, type Citation, type UsageResponse } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   chunks?: ChunkResult[];
+  citations?: Citation[];
   refused?: boolean;
   grounded?: boolean;
 }
@@ -105,21 +106,14 @@ export default function ChatPanel({
           role: "assistant",
           content: res.message,
           chunks: res.chunks,
+          citations: res.citations ?? [],
           refused: res.refused,
           grounded: res.grounded,
         },
       ]);
-      // Only highlight the primary source — the backend already ranks
-      // verified ≫ model_only ≫ gemini_only ≫ ocr_block, so chunks[0]
-      // is the chunk the system decided drove the answer.
-      if (res.chunks.length > 0 && !res.refused) {
-        const primary = res.chunks.find(
-          (c) => c.bbox.x1 - c.bbox.x0 > 0 && c.bbox.y1 - c.bbox.y0 > 0,
-        );
-        onChunksHighlight(primary ? [primary] : []);
-      } else {
-        onChunksHighlight([]);
-      }
+      // Don't auto-open the preview when the answer arrives. The user can
+      // click a source chip below the answer to highlight + open the modal.
+      onChunksHighlight([]);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -343,13 +337,23 @@ export default function ChatPanel({
 
               <p className="whitespace-pre-wrap">{msg.content}</p>
 
-              {msg.chunks && msg.chunks.length > 0 && (
+              {msg.chunks && msg.chunks.length > 0 && (() => {
+                // Prefer the LLM's validated citations. Fall back to the top
+                // retrieved chunks only if the LLM listed no citations at all.
+                const citedIds = new Set((msg.citations ?? []).map((c) => c.chunk_id));
+                let displayed: ChunkResult[] = msg.chunks.filter(
+                  (c) => c.cite_id && citedIds.has(c.cite_id),
+                );
+                if (displayed.length === 0) {
+                  displayed = msg.chunks.slice(0, 2);
+                }
+                return (
                 <div className="mt-3 pt-3 border-t border-card-border/40">
                   <p className="mb-2 text-[11px] font-medium" style={{ color: "var(--color-text-secondary)" }}>
                     Sources · click to highlight
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {msg.chunks.slice(0, 4).map((chunk, ci) => {
+                    {displayed.map((chunk, ci) => {
                       const v = (chunk.source_type === "extracted" && chunk.verification
                         ? chunk.verification
                         : null) as Verification | null;
@@ -398,7 +402,8 @@ export default function ChatPanel({
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         ))}
