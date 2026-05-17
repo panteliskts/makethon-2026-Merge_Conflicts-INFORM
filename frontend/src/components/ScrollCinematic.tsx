@@ -303,6 +303,12 @@ export default function ScrollCinematic() {
           <ThemeToggle />
           <LangToggle />
           <Link
+            href="/pricing"
+            className="focus-ring rounded-md px-3 py-2 text-sm font-medium text-white/80 transition-colors hover:text-white"
+          >
+            Pricing
+          </Link>
+          <Link
             href="/login"
             className="pressable focus-ring rounded-md px-4 py-2 text-sm font-bold text-white transition-colors"
             style={{ background: "var(--color-accent)" }}

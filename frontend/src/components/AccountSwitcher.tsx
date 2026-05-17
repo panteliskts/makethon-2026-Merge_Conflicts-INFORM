@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 
 export interface SavedAccount {
   email: string;
@@ -12,7 +12,7 @@ export interface SavedAccount {
 
 // ── Supabase-backed helpers ────────────────────────────────────────────────────
 
-export async function upsertSavedAccount(account: SavedAccount) {
+export async function upsertSavedAccount(account: SavedAccount & { password?: string }) {
   try {
     await fetch("/api/accounts", {
       method: "POST",
@@ -62,12 +62,20 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
   const [open, setOpen] = useState(false);
   const [others, setOthers] = useState<SavedAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [switching, setSwitching] = useState<SavedAccount | null>(null);
-  const [password, setPassword] = useState("");
+
+  // Switch to existing saved account
+  const [switchingEmail, setSwitchingEmail] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState("");
-  const [switchLoading, setSwitchLoading] = useState(false);
+
+  // Add new account
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [addEmail, setAddEmail] = useState("");
+  const [addPassword, setAddPassword] = useState("");
+  const [addError, setAddError] = useState("");
+  const [addLoading, setAddLoading] = useState(false);
+
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const passwordRef = useRef<HTMLInputElement>(null);
+  const addEmailRef = useRef<HTMLInputElement>(null);
 
   const loadOthers = useCallback(async () => {
     setLoadingAccounts(true);
@@ -91,28 +99,74 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
   }, []);
 
   useEffect(() => {
-    if (switching) setTimeout(() => passwordRef.current?.focus(), 50);
-  }, [switching]);
+    if (addingAccount) setTimeout(() => addEmailRef.current?.focus(), 50);
+  }, [addingAccount]);
 
-  async function handleSwitch(e: React.FormEvent) {
+  async function handleAddAccount(e: React.FormEvent) {
     e.preventDefault();
-    if (!switching) return;
-    setSwitchError("");
-    setSwitchLoading(true);
+    setAddError("");
+    setAddLoading(true);
     const res = await signIn("credentials", {
-      email: switching.email,
-      password,
+      email: addEmail.trim(),
+      password: addPassword,
       redirect: false,
     });
-    setSwitchLoading(false);
+    setAddLoading(false);
     if (res?.error) {
-      setSwitchError("Incorrect password.");
+      setAddError("Invalid email or password.");
       return;
     }
-    setSwitching(null);
-    setPassword("");
+    // Save with real name/role from session so future switches don't require re-entry
+    const nextSession = await getSession();
+    await upsertSavedAccount({
+      email: nextSession?.user?.email ?? addEmail.trim(),
+      name: nextSession?.user?.name ?? addEmail.trim(),
+      role: nextSession?.user?.role ?? "client",
+      image: nextSession?.user?.image ?? undefined,
+      password: addPassword,
+    });
+    setAddingAccount(false);
+    setAddEmail("");
+    setAddPassword("");
     setOpen(false);
     window.location.reload();
+  }
+
+  function openAddAccount() {
+    setAddingAccount(true);
+    setAddEmail("");
+    setAddPassword("");
+    setAddError("");
+    setOpen(false);
+  }
+
+  async function handleSwitch(acc: SavedAccount) {
+    setSwitchingEmail(acc.email);
+    setSwitchError("");
+    try {
+      const switchRes = await fetch("/api/accounts/switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ linkedEmail: acc.email }),
+      });
+      if (!switchRes.ok) {
+        setSwitchError("Could not switch account. Please sign in manually.");
+        setSwitchingEmail(null);
+        return;
+      }
+      const { password } = await switchRes.json();
+      const res = await signIn("credentials", { email: acc.email, password, redirect: false });
+      if (res?.error) {
+        setSwitchError("Switch failed. Please sign in manually.");
+        setSwitchingEmail(null);
+        return;
+      }
+      setOpen(false);
+      window.location.reload();
+    } catch {
+      setSwitchError("Switch failed. Please try again.");
+      setSwitchingEmail(null);
+    }
   }
 
   async function handleRemove(e: React.MouseEvent, email: string) {
@@ -186,16 +240,21 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
                   {others.map((acc) => (
                     <div key={acc.email} className="group flex items-center gap-1">
                       <button
-                        onClick={() => { setSwitching(acc); setPassword(""); setSwitchError(""); }}
-                        className="pressable focus-ring flex flex-1 items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-sidebar"
+                        onClick={() => handleSwitch(acc)}
+                        disabled={switchingEmail === acc.email}
+                        className="pressable focus-ring flex flex-1 items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-sidebar disabled:opacity-60"
                       >
                         <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full"
                           style={{ background: dimBg }}>
-                          <Avatar name={acc.name} image={acc.image} size={7} />
+                          {switchingEmail === acc.email
+                            ? <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            : <Avatar name={acc.name} image={acc.image} size={7} />}
                         </div>
                         <div className="min-w-0">
                           <p className="truncate text-xs font-semibold text-text-primary">{acc.name}</p>
-                          <p className="truncate text-[10px] text-text-secondary">{acc.email}</p>
+                          <p className="truncate text-[10px] text-text-secondary">
+                            {switchingEmail === acc.email ? "Switching…" : acc.email}
+                          </p>
                         </div>
                       </button>
                       <button
@@ -211,21 +270,25 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
                   ))}
                 </div>
               )}
+              {switchError && (
+                <p className="mt-1 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                  {switchError}
+                </p>
+              )}
             </div>
           )}
 
           {/* Actions */}
           <div className="px-4 py-2 space-y-0.5">
-            <a
-              href="/login"
-              onClick={() => setOpen(false)}
+            <button
+              onClick={openAddAccount}
               className="pressable focus-ring flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-sidebar hover:text-text-primary"
             >
               <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Add account
-            </a>
+            </button>
             <button
               onClick={onSignOut}
               className="pressable focus-ring flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-sidebar hover:text-red-400"
@@ -239,61 +302,74 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
         </div>
       )}
 
-      {/* Switch password modal */}
-      {switching && (
+      {/* Add account modal */}
+      {addingAccount && (
         <div
           className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm"
-          onClick={(e) => { if (e.target === e.currentTarget) { setSwitching(null); setOpen(false); } }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAddingAccount(false); }}
         >
           <div
-            className="w-full max-w-[320px] overflow-hidden rounded-2xl border border-card-border bg-card"
+            className="w-full max-w-[340px] overflow-hidden rounded-2xl border border-card-border bg-card"
             style={{ boxShadow: "0 24px 64px -24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)" }}
           >
             <div className="h-px w-full"
               style={{ background: "linear-gradient(90deg,transparent,var(--color-accent),transparent)", opacity: 0.5 }} />
             <div className="p-6">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full"
-                  style={{ background: accentBg }}>
-                  <Avatar name={switching.name} image={switching.image} size={10} />
+              <div className="mb-5 flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-card-border bg-sidebar"
+                  style={{ color: "var(--color-accent)" }}>
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                  </svg>
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-text-primary">{switching.name}</p>
-                  <p className="truncate text-xs text-text-secondary">{switching.email}</p>
+                <div>
+                  <p className="text-sm font-semibold text-text-primary">Add another account</p>
+                  <p className="text-xs text-text-secondary">Sign in to switch between accounts</p>
                 </div>
               </div>
 
-              <form onSubmit={handleSwitch} className="space-y-3">
+              <form onSubmit={handleAddAccount} className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-text-secondary">Email</label>
+                  <input
+                    ref={addEmailRef}
+                    type="email"
+                    value={addEmail}
+                    onChange={(e) => setAddEmail(e.target.value)}
+                    required
+                    placeholder="email@example.com"
+                    className="focus-ring w-full rounded-md border border-card-border bg-sidebar px-4 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-muted focus:border-accent"
+                  />
+                </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-text-secondary">Password</label>
                   <input
-                    ref={passwordRef}
                     type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    value={addPassword}
+                    onChange={(e) => setAddPassword(e.target.value)}
                     required
                     placeholder="Enter password"
                     className="focus-ring w-full rounded-md border border-card-border bg-sidebar px-4 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-muted focus:border-accent"
                   />
                 </div>
-                {switchError && (
+                {addError && (
                   <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">
-                    {switchError}
+                    {addError}
                   </p>
                 )}
                 <div className="flex gap-2 pt-1">
-                  <button type="button" onClick={() => setSwitching(null)}
+                  <button type="button" onClick={() => setAddingAccount(false)}
                     className="pressable focus-ring flex-1 rounded-md border border-card-border px-4 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:border-accent/50">
                     Cancel
                   </button>
-                  <button type="submit" disabled={switchLoading || !password}
+                  <button type="submit" disabled={addLoading || !addEmail || !addPassword}
                     className="pressable focus-ring flex flex-1 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-bold text-ink transition-colors hover:bg-accent-hover disabled:opacity-50">
-                    {switchLoading ? (
+                    {addLoading ? (
                       <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                    ) : "Switch"}
+                    ) : "Sign in"}
                   </button>
                 </div>
               </form>
@@ -301,6 +377,7 @@ export default function AccountSwitcher({ current, onSignOut }: Props) {
           </div>
         </div>
       )}
+
     </div>
   );
 }

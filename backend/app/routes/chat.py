@@ -1,5 +1,8 @@
 import time
+import math
+import re
 from fastapi import APIRouter, Request
+from openai import RateLimitError
 from ..models import ChatRequest, ChatResponse, ChunkResult, BoundingBox, Citation
 from ..services import embedder as emb_svc
 from ..services.llm import LLMService
@@ -61,6 +64,22 @@ def _resolve_failure_mode(
     return None
 
 
+def _quota_message(exc: RateLimitError) -> str:
+    match = re.search(r"retry in ([0-9.]+)s", str(exc), re.IGNORECASE)
+    if match:
+        seconds = max(1, math.ceil(float(match.group(1))))
+        return (
+            f"Gemini quota is temporarily exhausted. Try again in about "
+            f"{seconds} seconds. If this keeps happening, the daily free-tier "
+            "quota for the configured model is spent."
+        )
+    return (
+        "Gemini quota is temporarily exhausted. Please wait a bit and try "
+        "again. If this keeps happening, the daily free-tier quota for the "
+        "configured model is spent."
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest, request: Request):
     t0 = time.monotonic()
@@ -93,6 +112,7 @@ async def chat_endpoint(req: ChatRequest, request: Request):
     last_query = user_messages[-1].content
     top_k = settings.top_k
 
+    chunks: list[dict] = []
     try:
         if db.db_available():
             retrieve_k = settings.top_k_retrieve if settings.reranker_enabled else top_k
@@ -108,6 +128,26 @@ async def chat_endpoint(req: ChatRequest, request: Request):
         messages_dicts = [{"role": m.role, "content": m.content} for m in req.messages]
         result = await _get_llm().generate_chat_answer(
             messages_dicts, chunks, source_file=req.source_file
+        )
+    except RateLimitError as exc:
+        latency_ms = (time.monotonic() - t0) * 1000
+        record_event(
+            request, "chat",
+            "Gemini quota exhausted while generating chat response",
+            status="warning",
+            metadata={
+                "source_file": req.source_file,
+                "failure_mode": "quota",
+                "latency_ms": round(latency_ms, 1),
+            },
+        )
+        return ChatResponse(
+            message=_quota_message(exc),
+            chunks=[_build_chunk_result(c) for c in chunks],
+            grounded=False,
+            refused=True,
+            failure_mode="quota",
+            citations=[],
         )
     except Exception as exc:
         record_exception(

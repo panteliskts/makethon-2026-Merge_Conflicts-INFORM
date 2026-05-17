@@ -91,18 +91,24 @@ providers.push(
       }
 
       // 2. Fall back to Supabase app_users table (real sign-ups).
+      // Uses a SECURITY DEFINER RPC so the anon key can look up by email
+      // without a direct SELECT policy on the table.
       try {
-        const { createAdminClient } = await import("@/utils/supabase/admin");
-        const supabase = createAdminClient();
-        if (!supabase) return null;
+        const { createClient } = await import("@supabase/supabase-js");
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const key =
+          process.env.SUPABASE_SERVICE_KEY ??
+          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+        if (!url || !key) return null;
 
-        const { data: row } = await supabase
-          .from("app_users")
-          .select("id, name, email, password_hash, role")
-          .eq("email", credentials.email.toLowerCase())
-          .maybeSingle();
+        const supabase = createClient(url, key, { auth: { persistSession: false } });
+        const { data } = await supabase.rpc("get_user_by_email", {
+          p_email: credentials.email.toLowerCase(),
+        });
 
+        const row = Array.isArray(data) ? data[0] : data;
         if (!row) return null;
+
         const valid = await bcrypt.compare(credentials.password, row.password_hash);
         if (!valid) return null;
 

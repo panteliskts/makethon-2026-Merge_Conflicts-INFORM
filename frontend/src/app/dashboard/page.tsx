@@ -81,7 +81,11 @@ export default function Home() {
     for (const file of validFiles) {
       try {
         const result = await ingestFile(file);
-        newSources.push({ sourceFile: result.source_file, pdfUrl: result.preview_url });
+        const localUrl = URL.createObjectURL(file);
+        // Keep the backend URL for persisted previews, but use the local blob
+        // URL in the modal so a broken storage/static URL does not block review.
+        const pdfUrl = result.preview_url || localUrl;
+        newSources.push({ sourceFile: result.source_file, pdfUrl, localUrl });
       } catch (e: any) {
         setUploadError(e.message || `Failed to upload ${file.name}`);
       }

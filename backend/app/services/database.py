@@ -441,8 +441,8 @@ async def get_llm_cache(pool: asyncpg.Pool | None, key: str) -> dict | None:
                     "citations": list(row["citations"])}
         return None
     if _sb:
-        res = await _sb.table("llm_cache").select("answer,refused,citations").eq("cache_key", key).maybeSingle().execute()
-        if res.data:
+        res = await _sb.table("llm_cache").select("answer,refused,citations").eq("cache_key", key).maybe_single().execute()
+        if res is not None and res.data:
             await _sb.table("llm_cache").update({"last_used": "now()"}).eq("cache_key", key).execute()
             return res.data
     return None

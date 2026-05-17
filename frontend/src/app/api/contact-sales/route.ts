@@ -4,9 +4,6 @@ import { createClient } from "@supabase/supabase-js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Use service key if available, fall back to publishable key.
-// The app_users table has an INSERT RLS policy that allows anon,
-// so signup works with either key.
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
@@ -16,20 +13,27 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+function generatePassword(length = 14): string {
+  const chars =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$";
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 
-  const { name, email, password, role } = body as Record<string, string>;
+  const { name, email, company } = body as Record<string, string>;
 
-  if (!name?.trim() || !email?.trim() || !password?.trim()) {
+  if (!name?.trim() || !email?.trim() || !company?.trim()) {
     return NextResponse.json({ error: "All fields are required." }, { status: 400 });
   }
   if (!EMAIL_RE.test(email)) {
     return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
-  }
-  if (password.length < 8) {
-    return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
   }
 
   const supabase = getSupabase();
@@ -40,21 +44,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const userRole = role === "admin" ? "admin" : "client";
-  const password_hash = await bcrypt.hash(password, 10);
+  const plainPassword = generatePassword();
+  const password_hash = await bcrypt.hash(plainPassword, 10);
 
   const { error } = await supabase.from("app_users").insert({
-    name:          name.trim(),
-    email:         email.toLowerCase().trim(),
+    name: name.trim(),
+    email: email.toLowerCase().trim(),
     password_hash,
-    role:          userRole,
+    role: "admin",
   });
 
   if (error) {
-    // Unique constraint violation = email already registered
     if (error.code === "23505") {
       return NextResponse.json(
-        { error: "An account with this email already exists." },
+        { error: "An account with this email already exists. Please sign in." },
         { status: 409 },
       );
     }
@@ -64,5 +67,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    email: email.toLowerCase().trim(),
+    password: plainPassword,
+  });
 }
