@@ -1,0 +1,17 @@
+# Minimal image for hosting the INFORM MCP server.
+# The backend FastAPI URL is provided via INFORM_API_URL (typically
+# another container in the same compose / cluster).
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir "mcp[cli]>=1.2.0" "httpx>=0.27" "uvicorn[standard]>=0.30" "starlette>=0.37"
+
+COPY mcp_server.py ./
+
+ENV INFORM_MCP_TRANSPORT=http \
+    INFORM_MCP_HOST=0.0.0.0 \
+    INFORM_MCP_PORT=8765
+EXPOSE 8765
+
+CMD ["python", "mcp_server.py"]

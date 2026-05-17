@@ -68,7 +68,14 @@ async def get_signed_url(storage_path: str, expires_in: int = 3600) -> str:
         resp.raise_for_status()
         signed_path = resp.json()["signedURL"]
 
-    # signedURL is a relative path like /storage/v1/object/sign/...?token=...
+    # Supabase returns one of two shapes depending on API version:
+    #   "/storage/v1/object/sign/...?token=..."   (newer)
+    #   "/object/sign/...?token=..."              (older — what this project hits)
+    # Normalise so the final URL always carries the /storage/v1 prefix.
+    if signed_path.startswith("http://") or signed_path.startswith("https://"):
+        return signed_path  # already absolute
+    if not signed_path.startswith("/storage/v1"):
+        signed_path = "/storage/v1" + (signed_path if signed_path.startswith("/") else f"/{signed_path}")
     return f"{settings.supabase_url.rstrip('/')}{signed_path}"
 
 

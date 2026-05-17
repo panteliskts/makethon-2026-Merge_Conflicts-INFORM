@@ -94,16 +94,37 @@ def _extracted_chunks_from_image(
         model_result = {"fields": {}, "field_boxes": {}, "field_scores": {},
                         "line_items": []}
 
-    gem = None
-    if settings.cross_validate_ingest:
-        gem = cross_extract.gemini_extract(image)
-        if gem:
-            logger.info("cross_extract: page %d got %d gemini fields, %d items",
-                        page_num, sum(1 for v in gem["fields"].values() if v),
-                        len(gem["items"]))
-
     threshold = settings.extractor_confidence_threshold
     fuzzy = settings.cross_validate_fuzzy_threshold
+
+    # Smart Gemini fallback: only call Gemini Vision when the local model
+    # didn't cover the page well. If the model already produced enough
+    # high-confidence fields (default 4), skip the extra call.
+    strong = sum(
+        1 for v in model_result.get("field_scores", {}).values() if v >= threshold
+    )
+    gem = None
+    if settings.cross_validate_ingest:
+        skip_cap = settings.cross_validate_min_model_fields_to_skip
+        if strong >= skip_cap:
+            logger.info(
+                "cross_extract: page %d has %d strong model fields (>=%d); skipping Gemini",
+                page_num, strong, skip_cap,
+            )
+        else:
+            logger.info(
+                "cross_extract: page %d has only %d strong model fields; calling Gemini",
+                page_num, strong,
+            )
+            gem = cross_extract.gemini_extract(image)
+            if gem:
+                logger.info(
+                    "cross_extract: page %d got %d gemini fields, %d items",
+                    page_num,
+                    sum(1 for v in gem["fields"].values() if v),
+                    len(gem["items"]),
+                )
+
     chunks: list[dict] = []
 
     # ---- scalar fields ----

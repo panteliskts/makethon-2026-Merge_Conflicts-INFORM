@@ -26,11 +26,13 @@ def _tenant_email(request: Request) -> str:
 
 
 def _build_chunk_result(item: dict) -> ChunkResult:
+    from ..services.llm import _chunk_id as _llm_chunk_id
     meta = item.get("metadata", item)
     return ChunkResult(
         text=item["text"],
         score=float(item.get("score", item.get("vector_score", 1.0))),
         chunk_index=int(meta.get("chunk_index", 0)),
+        cite_id=_llm_chunk_id(item),
         source_type=str(meta.get("source_type", "ocr_block")),
         confidence=float(meta.get("confidence", 1.0)),
         entity=str(meta.get("entity", "")),
@@ -206,5 +208,5 @@ async def chat_endpoint(req: ChatRequest, request: Request):
         grounded=grounded,
         refused=refused,
         failure_mode=failure_mode,
-        citations=[Citation(**c) for c in citations],
+        citations=[Citation(**c) for c in citations if isinstance(c, dict)],
     )
