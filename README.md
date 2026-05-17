@@ -2,6 +2,8 @@
 
 AI-powered invoice analysis with RAG, bounding box highlighting, bank reconciliation, and an admin diagnostics console for pitch demos.
 
+Link to website: invoai.vardalas.com
+
 ## Prerequisites
 
 This repo ships a custom-trained LayoutLMv3 model (~500 MB) via **Git LFS**.
